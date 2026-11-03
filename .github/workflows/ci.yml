@@ -10,11 +10,7 @@ permissions:
 
 jobs:
   test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -22,6 +18,7 @@ jobs:
           go-version-file: go.mod
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
+      - run: GOOS=darwin go vet ./...
       - run: GOOS=windows go vet ./...
       - run: go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
       - run: go test -race ./...

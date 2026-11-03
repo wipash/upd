@@ -1,5 +1,7 @@
 # upd
 
+[![ci](https://github.com/wipash/upd/actions/workflows/ci.yml/badge.svg)](https://github.com/wipash/upd/actions/workflows/ci.yml)
+
 upd updates the software on a machine, running the updates in parallel. It covers OS packages, Homebrew, Flatpak, language toolchains, and command-line tools that update themselves, such as Claude Code and Codex. It is a single binary with a built-in list of update jobs, and you can add jobs or change the built-in ones in a TOML file.
 
 ## Install
@@ -35,7 +37,7 @@ A job runs only when its tool is installed. If a package manager such as Homebre
 
 ## Configuration
 
-upd reads `~/.config/upd/config.toml`, or `$XDG_CONFIG_HOME/upd/config.toml` when that variable is set, or `%AppData%\upd\config.toml` on Windows. The file is optional. `upd init` writes a starter file with comments.
+upd reads `~/.config/upd/config.toml`, or `$XDG_CONFIG_HOME/upd/config.toml` when that variable is set. The file is optional. `upd init` writes a starter file with comments.
 
 ```toml
 disable = ["snap"]                             # turn off built-in jobs
@@ -67,7 +69,7 @@ When you use a built-in job's name, upd changes only the fields you write. Set a
 | `skip_if` | A command that upd runs when the job starts. If it exits with 0, upd skips the job and shows the command's output as the reason. |
 | `version` | A command that prints the installed version. upd runs it before and after the job and shows `old → new`. |
 | `on_change` | A command to run after the job when the output of `version` changed. |
-| `env`, `cwd`, `shell` | Environment variables, the working directory (default `~`), and the shell (default `sh -c`, or `pwsh` on Windows). |
+| `env`, `cwd`, `shell` | Environment variables, the working directory (default `~`), and the shell (default `sh -c`). |
 | `timeout` | Defaults to `15m`, and to no timeout for system jobs. `"0"` turns it off. |
 | `ok_exit_codes` | Exit codes that count as success. Defaults to `[0]`. |
 
