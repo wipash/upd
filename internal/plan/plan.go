@@ -144,7 +144,11 @@ func Visible(cfg *config.Config, j *config.Job, f platform.Facts) string {
 			return "only for Linux (" + strings.Join(w.Distro, ", ") + ")"
 		}
 		if !slices.ContainsFunc(w.Distro, func(d string) bool { return slices.Contains(f.Distro, d) }) {
-			return fmt.Sprintf("only for %s (this is %s)", strings.Join(w.Distro, ", "), strings.Join(f.Distro, "/"))
+			msg := "only for " + strings.Join(w.Distro, ", ")
+			if len(f.Distro) > 0 {
+				msg += " (this is " + strings.Join(f.Distro, "/") + ")"
+			}
+			return msg
 		}
 	}
 	if w.WSL != nil && *w.WSL != f.WSL {

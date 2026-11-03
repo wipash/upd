@@ -97,6 +97,7 @@ type Spec struct {
 	OnChange    *Cmd
 	Timeout     *time.Duration
 	OkExitCodes *[]int
+	ReleaseAge  map[string]string
 
 	Pos      Position            // position of the job's key
 	FieldPos map[string]Position // position of each written field
@@ -108,14 +109,15 @@ type File struct {
 	ManagedPaths *[]string
 	Disable      *[]string
 	MaxParallel  *int
+	MinRelease   *int // days
 	Post         *Script
 	Jobs         map[string]*Spec
 	Order        []string // job names in document order
 }
 
 var (
-	topKeys  = []string{"managed_paths", "disable", "max_parallel", "post", "commands"}
-	jobKeys  = []string{"run", "shell", "cwd", "env", "after", "system", "sudo", "when", "skip_if", "version", "on_change", "timeout", "ok_exit_codes"}
+	topKeys  = []string{"managed_paths", "disable", "max_parallel", "min_release_age", "post", "commands"}
+	jobKeys  = []string{"run", "shell", "cwd", "env", "after", "system", "sudo", "when", "skip_if", "version", "on_change", "timeout", "ok_exit_codes", "release_age"}
 	whenKeys = []string{"has", "managed", "path", "path_not", "os", "distro", "wsl", "ssh", "exists", "missing"}
 	osValues = []string{"linux", "darwin", "windows"}
 )
@@ -194,6 +196,17 @@ func (d decoder) decodeFile(root *value) (*File, error) {
 				err = d.errf(f.val.pos, f.name, "must be 0 (unlimited) or more")
 			}
 			out.MaxParallel = &n
+		case "min_release_age":
+			var s string
+			if s, err = d.str(f.val, f.name); err != nil {
+				err = d.wrongType(f.val, f.name, `a number of days such as "2d"`)
+				break
+			}
+			var days int
+			if days, err = ParseDays(s); err != nil {
+				err = d.errf(f.val.pos, f.name, "%v", err)
+			}
+			out.MinRelease = &days
 		case "post":
 			out.Post, err = d.script(f.val, f.name)
 		case "commands":
@@ -265,6 +278,13 @@ func (d decoder) job(v *value, key string) (*Spec, error) {
 			var l []int
 			l, err = d.intList(f.val, k)
 			s.OkExitCodes = &l
+		case "release_age":
+			s.ReleaseAge, err = d.env(f.val, k)
+			for name, tmpl := range s.ReleaseAge {
+				if err == nil && strings.ContainsAny(fillAge(tmpl, 0), "{}") {
+					err = d.errf(f.val.pos, k+"."+name, "%q has an unknown placeholder (use {days} or {minutes})", tmpl)
+				}
+			}
 		default:
 			err = d.unknown(f, k, jobKeys)
 		}
@@ -495,4 +515,23 @@ func levenshtein(a, b string) int {
 		prev = cur
 	}
 	return prev[len(b)]
+}
+
+// ParseDays reads a number of days written as "2d". "0d" and "0" mean none.
+func ParseDays(s string) (int, error) {
+	if s == "0" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
+	if err != nil || n < 0 || !strings.HasSuffix(s, "d") {
+		return 0, fmt.Errorf(`invalid age %q (expected a number of days such as "2d", or "0d" for none)`, s)
+	}
+	return n, nil
+}
+
+func fillAge(tmpl string, days int) string {
+	return strings.NewReplacer(
+		"{days}", strconv.Itoa(days),
+		"{minutes}", strconv.Itoa(days*24*60),
+	).Replace(tmpl)
 }

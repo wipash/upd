@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestNewer(t *testing.T) {
@@ -48,5 +49,32 @@ func TestReplace(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Dir(exe))
 	if len(entries) != 1 {
 		t.Errorf("left %d files behind", len(entries))
+	}
+}
+
+func TestPick(t *testing.T) {
+	now := time.Now()
+	rel := func(tag string, age time.Duration) release {
+		return release{Tag: tag, Published: now.Add(-age)}
+	}
+	day := 24 * time.Hour
+	cutoff := now.Add(-2 * day)
+	releases := []release{
+		rel("v0.4.0", time.Hour),
+		rel("v0.3.0", 3*day),
+		rel("v0.2.0", 10*day),
+		{Tag: "v0.5.0", Prerelease: true, Published: now.Add(-10 * day)},
+	}
+	got, younger := pick(releases, "0.1.0", cutoff)
+	if got == nil || got.Tag != "v0.3.0" || younger == nil || younger.Tag != "v0.4.0" {
+		t.Errorf("pick = %v, %v", got, younger)
+	}
+	got, younger = pick(releases, "0.3.0", cutoff)
+	if got != nil || younger == nil || younger.Tag != "v0.4.0" {
+		t.Errorf("only a young release: %v, %v", got, younger)
+	}
+	got, younger = pick(releases, "0.1.0", now)
+	if got == nil || got.Tag != "v0.4.0" || younger != nil {
+		t.Errorf("no minimum age: %v, %v", got, younger)
 	}
 }

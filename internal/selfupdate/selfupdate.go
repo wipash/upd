@@ -25,8 +25,11 @@ import (
 const Repo = "wipash/upd"
 
 type release struct {
-	Tag    string `json:"tag_name"`
-	Assets []struct {
+	Tag        string    `json:"tag_name"`
+	Draft      bool      `json:"draft"`
+	Prerelease bool      `json:"prerelease"`
+	Published  time.Time `json:"published_at"`
+	Assets     []struct {
 		Name string `json:"name"`
 		URL  string `json:"browser_download_url"`
 	} `json:"assets"`
@@ -41,9 +44,9 @@ func AssetName(goos, goarch string) string {
 	return name
 }
 
-// Run updates the binary at exe from version current. It writes progress
-// to w.
-func Run(ctx context.Context, w io.Writer, current, exe string) error {
+// Run updates the binary at exe from version current to the newest
+// release published at least minDays days ago. It writes progress to w.
+func Run(ctx context.Context, w io.Writer, current, exe string, minDays int) error {
 	if current == "dev" || current == "" {
 		fmt.Fprintln(w, "development build; not updating")
 		return nil
@@ -51,15 +54,24 @@ func Run(ctx context.Context, w io.Writer, current, exe string) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
-	var rel release
-	if err := getJSON(ctx, "https://api.github.com/repos/"+Repo+"/releases/latest", &rel); err != nil {
+	var releases []release
+	if err := getJSON(ctx, "https://api.github.com/repos/"+Repo+"/releases?per_page=30", &releases); err != nil {
 		return fmt.Errorf("checking for a new release: %w", err)
 	}
-	latest := strings.TrimPrefix(rel.Tag, "v")
-	if !newer(latest, strings.TrimPrefix(current, "v")) {
-		fmt.Fprintf(w, "upd %s is up to date\n", current)
+	rel, younger := pick(releases, strings.TrimPrefix(current, "v"), time.Now().AddDate(0, 0, -minDays))
+	if rel == nil {
+		if younger != nil {
+			unit := "days"
+			if minDays == 1 {
+				unit = "day"
+			}
+			fmt.Fprintf(w, "upd %s is up to date (%s was released less than %d %s ago)\n", current, younger.Tag, minDays, unit)
+		} else {
+			fmt.Fprintf(w, "upd %s is up to date\n", current)
+		}
 		return nil
 	}
+	latest := strings.TrimPrefix(rel.Tag, "v")
 	want := AssetName(runtime.GOOS, runtime.GOARCH)
 	var binURL, sumURL string
 	for _, a := range rel.Assets {
@@ -94,6 +106,32 @@ func Run(ctx context.Context, w io.Writer, current, exe string) error {
 	}
 	fmt.Fprintf(w, "updated upd %s → %s\n", current, latest)
 	return nil
+}
+
+// pick returns the newest release that is newer than current and was
+// published before cutoff, or nil. younger is the newest release that is
+// newer than current but too recent, when it is newer than the one picked.
+func pick(releases []release, current string, cutoff time.Time) (rel, younger *release) {
+	for i := range releases {
+		r := &releases[i]
+		v := strings.TrimPrefix(r.Tag, "v")
+		if r.Draft || r.Prerelease || !newer(v, current) {
+			continue
+		}
+		if r.Published.After(cutoff) {
+			if younger == nil || newer(v, strings.TrimPrefix(younger.Tag, "v")) {
+				younger = r
+			}
+			continue
+		}
+		if rel == nil || newer(v, strings.TrimPrefix(rel.Tag, "v")) {
+			rel = r
+		}
+	}
+	if younger != nil && rel != nil && !newer(strings.TrimPrefix(younger.Tag, "v"), strings.TrimPrefix(rel.Tag, "v")) {
+		younger = nil
+	}
+	return rel, younger
 }
 
 // replace writes the new binary next to exe and renames it into place, so

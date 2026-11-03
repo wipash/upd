@@ -211,3 +211,52 @@ func TestBuiltinGroupsListEveryJobOnce(t *testing.T) {
 		}
 	}
 }
+
+func TestReleaseAge(t *testing.T) {
+	cfg := mustMerge(t, "")
+	if cfg.MinRelease != 2 {
+		t.Errorf("default min_release_age = %d days", cfg.MinRelease)
+	}
+	if got := cfg.ReleaseAgeEnv(cfg.Jobs["uv"]); got["UV_EXCLUDE_NEWER"] != "2 days" {
+		t.Errorf("uv env = %v", got)
+	}
+	if got := cfg.ReleaseAgeEnv(cfg.Jobs["pnpm"]); got["PNPM_CONFIG_MINIMUM_RELEASE_AGE"] != "2880" {
+		t.Errorf("pnpm env = %v", got)
+	}
+	if got := cfg.ReleaseAgeEnv(cfg.Jobs["claude"]); got != nil {
+		t.Errorf("claude env = %v", got)
+	}
+
+	cfg = mustMerge(t, `
+min_release_age = "0d"
+[commands.mine]
+run = "mine upgrade"
+release_age = { MINE_AGE = "{days}" }
+`)
+	if got := cfg.ReleaseAgeEnv(cfg.Jobs["uv"]); got != nil {
+		t.Errorf("0d still sets %v", got)
+	}
+	cfg.MinRelease = 3
+	if got := cfg.ReleaseAgeEnv(cfg.Jobs["mine"]); got["MINE_AGE"] != "3" {
+		t.Errorf("user job env = %v", got)
+	}
+
+	cfg = mustMerge(t, `
+[commands.uv]
+release_age = { UV_EXCLUDE_NEWER = "" }
+`)
+	if got := cfg.ReleaseAgeEnv(cfg.Jobs["uv"]); got != nil {
+		t.Errorf("clearing the variable left %v", got)
+	}
+
+	for doc, want := range map[string]string{
+		`min_release_age = "2"`:   `invalid age "2"`,
+		`min_release_age = 2`:     `expected a number of days such as "2d"`,
+		`min_release_age = "-1d"`: `invalid age "-1d"`,
+		"[commands.x]\nrun = \"x\"\nrelease_age = { A = \"{weeks}\" }": "unknown placeholder",
+	} {
+		if _, err := merge(t, doc); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: got %v, want %q", doc, err, want)
+		}
+	}
+}

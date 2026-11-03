@@ -435,12 +435,20 @@ var defaultEnv = map[string]string{
 }
 
 // extraEnv returns the variables upd adds to the inherited environment.
+// Defaults and release-age settings yield to the user's environment; the
+// job's own env does not.
 func (r *Runner) extraEnv(j *config.Job) map[string]string {
 	out := map[string]string{}
-	for k, v := range defaultEnv {
-		if _, set := os.LookupEnv(k); !set {
-			out[k] = v
+	unlessSet := func(m map[string]string) {
+		for k, v := range m {
+			if _, set := os.LookupEnv(k); !set {
+				out[k] = v
+			}
 		}
+	}
+	unlessSet(defaultEnv)
+	if r.Config != nil {
+		unlessSet(r.Config.ReleaseAgeEnv(j))
 	}
 	for k, v := range j.Env {
 		out[k] = v

@@ -1,0 +1,39 @@
+# Jobs with release_age pass the minimum release age to their tool.
+chmod 0755 bin/uv
+
+exec upd --dry-run uv
+stdout '^uv +will run +\(releases at least 2 days old\)$'
+
+exec upd --plain uv
+grep '^2 days$' $WORK/uv-env
+
+# The flag overrides the config for one run.
+exec upd --plain --min-release-age 7d uv
+grep '^7 days$' $WORK/uv-env
+
+exec upd --plain --min-release-age=0d uv
+grep '^unset$' $WORK/uv-env
+
+! exec upd --min-release-age 7 uv
+stderr 'invalid age "7"'
+
+# The config can turn it off.
+mkdir home/.config/upd
+cp off.toml home/.config/upd/config.toml
+exec upd --dry-run uv
+stdout '^uv +will run$'
+exec upd --plain uv
+grep '^unset$' $WORK/uv-env
+
+# A value set in the environment wins.
+env UV_EXCLUDE_NEWER=2026-01-01
+exec upd --plain uv
+grep '^2026-01-01$' $WORK/uv-env
+
+-- bin/uv --
+#!/bin/sh
+case "$1" in
+tool) echo "${UV_EXCLUDE_NEWER-unset}" > "$WORK/uv-env" ;;
+esac
+-- off.toml --
+min_release_age = "0d"

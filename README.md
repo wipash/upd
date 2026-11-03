@@ -21,6 +21,8 @@ upd brew claude     run only these jobs, including system and disabled ones
 upd --dry-run       list every job, whether it would run, and why
 upd -v              print each job's output as it runs
 upd --plain         print one line per event instead of the live status board
+upd --min-release-age 7d
+                    change the minimum release age for this run (0d turns it off)
 upd init            write a starter config file
 upd config          print the config, including the built-in jobs
 ```
@@ -35,12 +37,19 @@ A job runs only when its tool is installed. If a package manager such as Homebre
 
 `upd --dry-run` shows which jobs apply to this machine and why the others do not. `upd config` shows each job's exact name and commands.
 
+## Release age
+
+By default, upd asks tools to skip releases published less than 2 days ago, so a broken or malicious release has time to be noticed and pulled first. Only some tools support this: uv, pipx, mise, pnpm, packages installed with volta, and upd itself. The others, including brew, flatpak, the OS package managers and claude, always install the latest release.
+
+Set `min_release_age` in the config to change the default, or `"0d"` to turn it off. If you already set a tool's own variable in your environment, such as `UV_EXCLUDE_NEWER`, upd leaves it alone.
+
 ## Configuration
 
 upd reads `~/.config/upd/config.toml`, or `$XDG_CONFIG_HOME/upd/config.toml` when that variable is set. The file is optional. `upd init` writes a starter file with comments.
 
 ```toml
 disable = ["snap"]                             # turn off built-in jobs
+min_release_age = "7d"                         # skip releases younger than 7 days
 post = ["notify-send upd \"exit $UPD_EXIT\""]  # run after every job has finished
 
 [commands]
@@ -72,6 +81,7 @@ When you use a built-in job's name, upd changes only the fields you write. Set a
 | `env`, `cwd`, `shell` | Environment variables, the working directory (default `~`), and the shell (default `sh -c`). |
 | `timeout` | Defaults to `15m`, and to no timeout for system jobs. `"0"` turns it off. |
 | `ok_exit_codes` | Exit codes that count as success. Defaults to `[0]`. |
+| `release_age` | Environment variables that pass the minimum release age to the tool, such as `{ UV_EXCLUDE_NEWER = "{days} days" }`. `{days}` and `{minutes}` are replaced with the age. upd sets them only when `min_release_age` is more than 0. |
 
 A command can differ by OS, as in `run = { unix = "...", windows = "..." }`. The keys are `unix`, `linux`, `darwin` and `windows`.
 

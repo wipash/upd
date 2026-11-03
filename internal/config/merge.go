@@ -33,6 +33,7 @@ type Job struct {
 	OnChange    Cmd
 	Timeout     time.Duration // 0 means none
 	OkExitCodes []int
+	ReleaseAge  map[string]string // env var -> template with {days} or {minutes}
 
 	// Source records where each written field came from, keyed by TOML key.
 	Source map[string]string
@@ -43,6 +44,7 @@ type Config struct {
 	ManagedPaths []string
 	Disable      []string
 	MaxParallel  int
+	MinRelease   int // days; 0 means no minimum
 	Post         Script
 	Jobs         map[string]*Job
 	UserFile     string // empty when there is no user file
@@ -75,6 +77,9 @@ func Merge(builtin, user *File) (*Config, error) {
 		}
 		if f.MaxParallel != nil {
 			cfg.MaxParallel = *f.MaxParallel
+		}
+		if f.MinRelease != nil {
+			cfg.MinRelease = *f.MinRelease
 		}
 		if f.Post != nil {
 			cfg.Post = *f.Post
@@ -117,16 +122,7 @@ func apply(j *Job, s *Spec, src string) {
 		set("cwd")
 	}
 	if s.Env != nil {
-		if j.Env == nil {
-			j.Env = map[string]string{}
-		}
-		for k, v := range s.Env {
-			if v == "" {
-				delete(j.Env, k)
-			} else {
-				j.Env[k] = v
-			}
-		}
+		j.Env = mergeEnv(j.Env, s.Env)
 		set("env")
 	}
 	if s.After != nil {
@@ -165,6 +161,38 @@ func apply(j *Job, s *Spec, src string) {
 		j.OkExitCodes = *s.OkExitCodes
 		set("ok_exit_codes")
 	}
+	if s.ReleaseAge != nil {
+		j.ReleaseAge = mergeEnv(j.ReleaseAge, s.ReleaseAge)
+		set("release_age")
+	}
+}
+
+// mergeEnv layers over onto base key by key. An empty value removes the key.
+func mergeEnv(base, over map[string]string) map[string]string {
+	if base == nil {
+		base = map[string]string{}
+	}
+	for k, v := range over {
+		if v == "" {
+			delete(base, k)
+		} else {
+			base[k] = v
+		}
+	}
+	return base
+}
+
+// ReleaseAgeEnv returns the variables that tell j's tools to skip releases
+// younger than c.MinRelease days.
+func (c *Config) ReleaseAgeEnv(j *Job) map[string]string {
+	if c.MinRelease <= 0 || len(j.ReleaseAge) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for k, tmpl := range j.ReleaseAge {
+		out[k] = fillAge(tmpl, c.MinRelease)
+	}
+	return out
 }
 
 // validate checks references across the whole merged config. It runs on

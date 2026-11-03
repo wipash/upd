@@ -13,6 +13,10 @@ managed_paths = [
   "*/WinGet/Packages/*", "*/scoop/apps/*", "*/chocolatey/*",
 ]
 
+# Jobs with release_age pass this to their tool, which then skips releases
+# published less than this many days ago.
+min_release_age = "2d"
+
 # ---------------------------------------------------------------------------
 # System package managers (sudo, only with -a/--all)
 
@@ -115,10 +119,14 @@ version = "uv --version"
 [commands.uv]
 after = ["uv-self", "brew"]
 run = "uv tool upgrade --all"
+# The environment variable overrides the cutoff that uv stores with each tool
+# at install time.
+release_age = { UV_EXCLUDE_NEWER = "{days} days" }
 version = "uv tool list"
 
 [commands.pipx]
 run = "pipx upgrade-all"
+release_age = { PIPX_COOLDOWN = "{days}" }
 version = "pipx list --short"
 
 [commands.rustup]
@@ -129,11 +137,13 @@ timeout = "30m"
 after = ["brew", "mise-self"]
 env = { MISE_YES = "1" }
 run = "mise upgrade"
+release_age = { MISE_MINIMUM_RELEASE_AGE = "{days}d" }
 version = "mise ls --current"
 
 [commands.mise-self]
 when = { managed = false }
 run = "mise self-update --yes"
+release_age = { MISE_SELF_UPDATE_MINIMUM_RELEASE_AGE = "{days}d" }
 version = "mise --version"
 
 [commands.gh-extensions]
@@ -151,6 +161,9 @@ version = "gh extension list"
 when = { has = "volta" }
 after = ["brew"]
 version = "volta list --format plain"
+# Applies to packages, which volta installs with npm. Node versions are not
+# filtered.
+release_age = { npm_config_min_release_age = "{days}" }
 run = { unix = '''
 set -e
 list=$(volta list --format plain)
@@ -164,6 +177,7 @@ done
 [commands.upd]
 when = { managed = false }
 run = "upd self-update"
+release_age = { UPD_MIN_RELEASE_AGE = "{days}" }
 version = "upd version"
 
 # ---------------------------------------------------------------------------
@@ -245,6 +259,7 @@ version = "bun --version"
 [commands.pnpm]
 when = { managed = false }
 run = "pnpm self-update"
+release_age = { PNPM_CONFIG_MINIMUM_RELEASE_AGE = "{minutes}" }
 version = "pnpm --version"
 
 [commands.chezmoi]

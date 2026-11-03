@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -48,11 +49,14 @@ flags:
       --dry-run   show what would run and why, without running anything
   -v, --verbose   print every job's output, prefixed with its name
       --plain     plain line output even on a terminal
+      --min-release-age DAYS
+                  skip releases younger than this, such as 7d; 0d for none
   -h, --help      show this help
 `
 
 type options struct {
 	all, dryRun, verbose, plain bool
+	minRelease                  *int
 	names                       []string
 }
 
@@ -75,8 +79,12 @@ func mainErr(args []string) int {
 			if err == nil {
 				exe, err = filepath.EvalSymlinks(exe)
 			}
+			minDays := 0
 			if err == nil {
-				err = selfupdate.Run(context.Background(), os.Stdout, version, exe)
+				minDays, err = envDays("UPD_MIN_RELEASE_AGE")
+			}
+			if err == nil {
+				err = selfupdate.Run(context.Background(), os.Stdout, version, exe, minDays)
 			}
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "upd:", err)
@@ -89,7 +97,26 @@ func mainErr(args []string) int {
 		}
 	}
 	var o options
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--min-release-age" || strings.HasPrefix(a, "--min-release-age=") {
+			v, ok := strings.CutPrefix(a, "--min-release-age=")
+			if !ok {
+				if i+1 == len(args) {
+					fmt.Fprintf(os.Stderr, "upd: --min-release-age needs a value such as 7d\n\n%s", usage)
+					return exitUsage
+				}
+				i++
+				v = args[i]
+			}
+			days, err := config.ParseDays(v)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "upd: --min-release-age: %v\n", err)
+				return exitUsage
+			}
+			o.minRelease = &days
+			continue
+		}
 		switch a {
 		case "-a", "--all":
 			o.all = true
@@ -194,6 +221,9 @@ func starterConfig() string {
 # Turn off built-in jobs by name.
 # disable = ["snap"]
 
+# Tools that support it skip releases younger than this. "0d" turns it off.
+# min_release_age = "2d"
+
 # Commands to run once after every job has finished. They can read the job
 # names in UPD_UPDATED and UPD_FAILED, and upd's exit code in UPD_EXIT.
 # post = ["notify-send upd \"exit $UPD_EXIT\""]
@@ -203,7 +233,8 @@ func starterConfig() string {
 # hermes = "hermes update --yes"
 #
 # Or as a table with any of these fields: run, shell, cwd, env, after, system,
-# sudo, when, skip_if, version, on_change, timeout, ok_exit_codes.
+# sudo, when, skip_if, version, on_change, timeout, ok_exit_codes,
+# release_age.
 #
 # Using a built-in job's name changes only the fields you write:
 # [commands.apt]
@@ -248,6 +279,9 @@ func cmdRun(o options) int {
 	cfg, _, code := loadConfig()
 	if cfg == nil {
 		return code
+	}
+	if o.minRelease != nil {
+		cfg.MinRelease = *o.minRelease
 	}
 	facts := platform.Detect()
 	p, err := plan.Build(cfg, facts, plan.Options{All: o.all, Names: o.names})
@@ -406,6 +440,9 @@ func dryRun(cfg *config.Config, p *plan.Plan, facts platform.Facts) int {
 			if e.Job.Sudo {
 				r.detail = strings.TrimSpace(r.detail + " (sudo)")
 			}
+			if cfg.ReleaseAgeEnv(e.Job) != nil {
+				r.detail = strings.TrimSpace(r.detail + fmt.Sprintf(" (releases at least %s old)", days(cfg.MinRelease)))
+			}
 			if e.Watch {
 				r.detail = strings.TrimSpace(r.detail + " (watcher)")
 			}
@@ -427,6 +464,27 @@ func dryRun(cfg *config.Config, p *plan.Plan, facts platform.Facts) int {
 		}
 	}
 	return exitOK
+}
+
+// envDays reads a whole number of days from an environment variable, as set
+// by the upd job's release_age.
+func envDays(name string) (int, error) {
+	v := os.Getenv(name)
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("%s=%q is not a number of days", name, v)
+	}
+	return n, nil
+}
+
+func days(n int) string {
+	if n == 1 {
+		return "1 day"
+	}
+	return fmt.Sprintf("%d days", n)
 }
 
 // skipCheck runs a job's skip_if command for --dry-run.
