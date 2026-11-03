@@ -2,7 +2,9 @@
 
 [![ci](https://github.com/wipash/upd/actions/workflows/ci.yml/badge.svg)](https://github.com/wipash/upd/actions/workflows/ci.yml)
 
-upd (`UP-dee`) updates all your stuff pretty quick.
+upd (`UP-dee`) updates all* your stuff pretty quick.
+
+*as long as you're running Linux or MacOS. Windows support coming soon.
 
 ## Install
 
