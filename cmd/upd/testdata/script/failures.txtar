@@ -1,0 +1,17 @@
+# A failing job prints its log, does not stop the others, and makes the
+# run exit 1. Timeouts are reported as such.
+mkdir home/.config/upd
+cp config.toml home/.config/upd/config.toml
+
+! exec upd
+stdout '━━ broken: exit 4: it broke'
+stdout '  it broke'
+stdout '━━ slow: timed out after 300ms'
+stdout 'ok +fine'
+stdout '2 ok, 2 failed'
+
+-- config.toml --
+[commands]
+broken = "echo starting; echo it broke >&2; exit 4"
+slow = { run = "sleep 10", timeout = "300ms" }
+fine = "echo all good"

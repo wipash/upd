@@ -1,0 +1,34 @@
+# With no config, upd runs the built-ins whose tools are installed.
+# claude is installed in ~/.local/bin, so its job applies; herdr is a brew
+# install (under a Cellar directory), so its job is left to brew.
+chmod 0755 home/.local/bin/claude
+chmod 0755 brew/Cellar/herdr/1.0/bin/herdr
+symlink bin/claude -> ../home/.local/bin/claude
+symlink bin/herdr -> ../brew/Cellar/herdr/1.0/bin/herdr
+
+exec upd --dry-run
+stdout '^claude +will run$'
+stdout '^herdr +hidden +herdr is managed by a package manager'
+stdout '^brew +hidden +brew is not installed$'
+stdout '^apt +hidden +only for debian'
+
+exec upd
+stdout 'updated claude [0-9.]+s  2\.1\.0 → 2\.1\.1'
+stdout '1 updated'
+stdout 'logs: .*/home/.local/state/upd/logs/'
+exists $WORK/claude-ran
+
+# A second run finds nothing new.
+exec upd claude
+stdout 'ok +claude .*up to date \(2\.1\.1 \(Claude Code\)\)'
+
+-- home/.local/bin/claude --
+#!/bin/sh
+case "$1" in
+--version) cat "$HOME/claude-version" 2>/dev/null || echo "2.1.0 (Claude Code)" ;;
+update) echo "2.1.1 (Claude Code)" > "$HOME/claude-version"; touch "$WORK/claude-ran"; echo "Successfully updated" ;;
+esac
+-- brew/Cellar/herdr/1.0/bin/herdr --
+#!/bin/sh
+echo "herdr should not run" >&2
+exit 1

@@ -1,0 +1,312 @@
+# Built-in jobs. This file uses exactly the schema available in the user
+# config, and the user config is merged over it by job name.
+
+# Where package managers put the programs they install. A self-updating tool
+# whose binary resolves (symlinks followed) to one of these paths is left to
+# its package manager: jobs with `when.managed = false` hide themselves.
+# `*` matches any run of characters, including "/".
+managed_paths = [
+  "*/Cellar/*", "*/Caskroom/*", "*/linuxbrew/*", "/opt/homebrew/*",
+  "/usr/bin/*", "/usr/sbin/*", "/usr/lib/*", "/usr/lib64/*", "/usr/libexec/*", "/usr/share/*", "/bin/*", "/sbin/*",
+  "/nix/*", "/snap/*",
+  "*/mise/installs/*", "*/.volta/*", "*/uv/tools/*", "*/pipx/venvs/*", "*/.cargo/bin/*", "*/go/bin/*",
+  "*/WinGet/Packages/*", "*/scoop/apps/*", "*/chocolatey/*",
+]
+
+# ---------------------------------------------------------------------------
+# System package managers (sudo, only with -a/--all)
+
+[commands.apt]
+system = true
+sudo = true
+when = { distro = ["debian"], has = "apt-get" }
+env = { DEBIAN_FRONTEND = "noninteractive", NEEDRESTART_MODE = "l" }
+run = [
+  "apt-get -o DPkg::Lock::Timeout=600 update",
+  "apt-get -y -o DPkg::Lock::Timeout=600 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold upgrade --with-new-pkgs",
+]
+version = "dpkg-query -W -f '${Package} ${Version}\\n'"
+
+[commands.dnf]
+system = true
+sudo = true
+when = { distro = ["fedora", "mageia"], has = "dnf", missing = "/run/ostree-booted" }
+run = "dnf upgrade -y --refresh"
+version = "rpm -qa --qf '%{NAME} %{EVR}\\n'"
+
+[commands.apk]
+system = true
+sudo = true
+when = { distro = ["alpine"], has = "apk" }
+run = "apk --wait 600 -U upgrade"
+version = "apk info -v"
+
+[commands.pacman]
+system = true
+sudo = true
+when = { distro = ["arch"], has = "pacman" }
+run = "pacman -Syu --noconfirm"
+version = "pacman -Q"
+
+[commands.zypper-dup]
+system = true
+sudo = true
+when = { distro = ["opensuse-tumbleweed", "opensuse-slowroll"], has = "zypper", missing = "/usr/sbin/transactional-update" }
+env = { ZYPP_LOCK_TIMEOUT = "600" }
+run = "zypper -n dup --auto-agree-with-licenses"
+version = "rpm -qa --qf '%{NAME} %{EVR}\\n'"
+
+[commands.zypper-update]
+system = true
+sudo = true
+when = { distro = ["opensuse-leap", "sles"], has = "zypper", missing = "/usr/sbin/transactional-update" }
+env = { ZYPP_LOCK_TIMEOUT = "600" }
+run = "zypper -n update --auto-agree-with-licenses"
+version = "rpm -qa --qf '%{NAME} %{EVR}\\n'"
+
+[commands.snap]
+system = true
+sudo = true
+when = { has = "snap", exists = "/run/snapd.socket" }
+run = "snap refresh"
+version = "snap list"
+
+# Fedora Atomic (Silverblue, Kinoite, Bazzite, Bluefin, Aurora). polkit lets
+# an active local session upgrade without a password; over SSH it needs sudo.
+[commands.rpm-ostree]
+system = true
+when = { has = "rpm-ostree", exists = "/run/ostree-booted", ssh = false }
+skip_if = "systemctl is-active -q uupd.service uupd-manual.service && echo 'uupd is already updating the system'"
+run = "rpm-ostree upgrade"
+version = "rpm-ostree status"
+
+[commands.rpm-ostree-ssh]
+system = true
+sudo = true
+when = { has = "rpm-ostree", exists = "/run/ostree-booted", ssh = true }
+skip_if = "systemctl is-active -q uupd.service uupd-manual.service && echo 'uupd is already updating the system'"
+run = "rpm-ostree upgrade"
+version = "rpm-ostree status"
+
+# ---------------------------------------------------------------------------
+# User-level package managers
+
+[commands.flatpak]
+run = "flatpak update -y --noninteractive"
+version = "flatpak list --columns=ref,active"
+timeout = "1h"
+
+# Bazzite's uupd also updates brew, and brew's lock fails instead of waiting.
+[commands.brew]
+env = { HOMEBREW_NO_AUTO_UPDATE = "1", NONINTERACTIVE = "1", HOMEBREW_NO_ENV_HINTS = "1" }
+skip_if = { linux = "systemctl is-active -q uupd.service uupd-manual.service && echo 'uupd is already updating brew'" }
+run = ["brew update", "brew upgrade --greedy"]
+version = "brew list --versions"
+timeout = "1h"
+
+# Only uv's own installer leaves a receipt; pip and cargo installs cannot
+# update themselves.
+[commands.uv-self]
+when = { managed = false }
+skip_if = { unix = "[ -f \"${XDG_CONFIG_HOME:-$HOME/.config}/uv/uv-receipt.json\" ] && exit 1; echo 'not installed by the uv installer'" }
+run = "uv self update"
+version = "uv --version"
+
+[commands.uv]
+after = ["uv-self", "brew"]
+run = "uv tool upgrade --all"
+version = "uv tool list"
+
+[commands.pipx]
+run = "pipx upgrade-all"
+version = "pipx list --short"
+
+[commands.rustup]
+run = "rustup update"
+timeout = "30m"
+
+[commands.mise]
+after = ["brew", "mise-self"]
+env = { MISE_YES = "1" }
+run = "mise upgrade"
+version = "mise ls --current"
+
+[commands.mise-self]
+when = { managed = false }
+run = "mise self-update --yes"
+version = "mise --version"
+
+[commands.gh-extensions]
+when = { has = "gh" }
+after = ["brew"]
+env = { GH_PROMPT_DISABLED = "1", GH_NO_UPDATE_NOTIFIER = "1" }
+skip_if = { unix = "[ -z \"$(gh extension list)\" ] && echo 'no extensions installed'" }
+run = "gh extension upgrade --all"
+version = "gh extension list"
+
+# Volta has no "upgrade everything" command. This keeps the default node on
+# its current major version, and moves package managers and packages to
+# their latest versions.
+[commands.volta]
+when = { has = "volta" }
+after = ["brew"]
+version = "volta list --format plain"
+run = { unix = '''
+set -e
+list=$(volta list --format plain)
+major=$(printf '%s\n' "$list" | awk '$1 == "runtime" && /\(default\)/ { sub(/^node@/, "", $2); split($2, v, "."); print v[1] }')
+if [ -n "$major" ]; then volta install "node@$major"; fi
+for tool in $(printf '%s\n' "$list" | awk '$1 == "package-manager" || $1 == "package" { sub(/@[^@]*$/, "", $2); print $2 }'); do
+  volta install "$tool@latest"
+done
+''' }
+
+[commands.upd]
+when = { managed = false }
+run = "upd self-update"
+version = "upd version"
+
+# ---------------------------------------------------------------------------
+# Self-updating CLIs
+
+[commands.claude]
+when = { managed = false }
+run = "claude update"
+version = "claude --version"
+
+[commands.codex]
+when = { managed = false }
+run = "codex update"
+version = "codex --version"
+
+[commands.copilot]
+when = { managed = false }
+run = "copilot update"
+version = "copilot --version"
+
+# omp and pi run on bun or node, which often come from brew.
+[commands.omp]
+when = { managed = false }
+after = ["brew"]
+run = "omp update"
+version = "omp --version"
+
+[commands.pi]
+when = { managed = false }
+after = ["brew"]
+run = "pi update"
+version = "pi --version"
+
+[commands.herdr]
+when = { managed = false }
+run = "herdr update --handoff"
+version = "herdr --version"
+
+[commands.herdr-core]
+when = { managed = false }
+run = "herdr-core update"
+version = "herdr-core --version"
+
+[commands.agy]
+when = { managed = false }
+run = "agy update"
+version = "agy --version"
+
+[commands.opencode]
+when = { managed = false }
+run = "opencode upgrade"
+version = "opencode --version"
+
+[commands.cursor-agent]
+when = { managed = false }
+run = "cursor-agent update"
+version = "cursor-agent --version"
+
+[commands.amp]
+when = { managed = false }
+run = "amp update"
+version = "amp --version"
+
+[commands.goose]
+when = { managed = false }
+run = "goose update"
+version = "goose --version"
+
+[commands.deno]
+when = { managed = false }
+run = "deno upgrade"
+version = "deno --version"
+
+[commands.bun]
+when = { managed = false }
+run = "bun upgrade"
+version = "bun --version"
+
+[commands.pnpm]
+when = { managed = false }
+run = "pnpm self-update"
+version = "pnpm --version"
+
+[commands.chezmoi]
+when = { managed = false }
+run = "chezmoi upgrade"
+version = "chezmoi --version"
+
+[commands.rclone]
+when = { managed = false }
+run = "rclone selfupdate"
+version = "rclone version"
+
+[commands.yt-dlp]
+when = { managed = false }
+run = "yt-dlp -U"
+version = "yt-dlp --version"
+
+[commands.gcloud]
+when = { managed = false }
+run = "gcloud components update --quiet"
+version = "gcloud version"
+timeout = "30m"
+
+[commands.az]
+when = { managed = false }
+run = "az upgrade --yes"
+version = "az version"
+
+[commands.flyctl]
+when = { managed = false }
+run = "flyctl version upgrade"
+version = "flyctl version"
+
+[commands.ghcup]
+when = { managed = false }
+run = "ghcup upgrade"
+version = "ghcup --numeric-version"
+
+[commands.juliaup]
+when = { managed = false }
+run = ["juliaup self update", "juliaup update"]
+version = "juliaup status"
+
+# sdk is a shell function, so the job sources sdkman's init script.
+[commands.sdkman]
+when = { has = "", exists = "~/.sdkman/bin/sdkman-init.sh", os = ["linux", "darwin"] }
+shell = "bash -c"
+run = 'source "$HOME/.sdkman/bin/sdkman-init.sh" && sdk selfupdate && sdk update'
+
+# AWS CLI 2.36+ updates itself. Builds from pip, brew, snap or a distro
+# package report a different source in `aws --version` and are skipped.
+[commands.aws]
+when = { managed = false, path_not = ["/usr/local/aws-cli/*"] }
+skip_if = { unix = "aws --version | grep -Eq ' (exe|script-exe|update-exe)/' && exit 1; echo 'not installed by the official AWS installer'" }
+run = "aws update"
+version = "aws --version"
+
+[commands.aws-system]
+system = true
+sudo = true
+when = { has = "aws", path = ["/usr/local/aws-cli/*"] }
+skip_if = { unix = "aws --version | grep -Eq ' (exe|script-exe|update-exe)/' && exit 1; echo 'not installed by the official AWS installer'" }
+# sudo's secure_path leaves out /usr/local/bin on some distros.
+run = "/usr/local/aws-cli/v2/current/bin/aws update"
+version = "aws --version"

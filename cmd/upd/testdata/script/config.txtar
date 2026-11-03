@@ -1,0 +1,34 @@
+# Config errors name the file, line and column, and exit 2.
+mkdir home/.config/upd
+cp bad.toml home/.config/upd/config.toml
+! exec upd
+stderr 'config.toml:2:1: commands.apt.sytem: unknown key \(did you mean "system"\?\)'
+
+cp cycle.toml home/.config/upd/config.toml
+! exec upd --dry-run
+stderr 'jobs wait for each other in a cycle: a -> b -> a'
+
+rm home/.config/upd/config.toml
+! exec upd nosuchjob
+stderr 'unknown job "nosuchjob"'
+! exec upd --bogus
+stderr 'unknown flag --bogus'
+
+# init writes a starter config once.
+exec upd init
+stdout 'wrote .*config.toml'
+exec upd config
+stdout '^\[commands.brew\]$'
+! exec upd init
+stderr 'already exists'
+
+-- bad.toml --
+[commands.apt]
+sytem = true
+-- cycle.toml --
+[commands.a]
+run = "true"
+after = ["b"]
+[commands.b]
+run = "true"
+after = ["a"]

@@ -1,0 +1,54 @@
+# omp waits for brew. The watcher sees brew change herdr and reloads it.
+# Naming brew also runs the watcher, but not omp.
+chmod 0755 bin/brew
+chmod 0755 bin/omp
+chmod 0755 bin/herdr
+chmod 0755 bin/systemctl
+mkdir home/.config/upd
+cp config.toml home/.config/upd/config.toml
+
+exec upd
+cmp $WORK/order want-order
+stdout 'updated herdr-restart .* 1\.0 → 1\.1'
+exists $WORK/reloaded
+stdout 'post: brew herdr-restart'
+
+rm $WORK/order $WORK/reloaded $WORK/herdr-version
+exec upd brew
+stdout 'start brew'
+! stdout 'start omp'
+stdout 'updated herdr-restart'
+exists $WORK/reloaded
+
+-- config.toml --
+post = ["echo post: $UPD_UPDATED | tr -d '\\n' > $WORK/post; cat $WORK/post"]
+[commands.herdr-restart]
+after = ["brew"]
+version = "herdr --version"
+on_change = "herdr reload"
+-- want-order --
+brew start
+brew end
+omp
+-- bin/systemctl --
+#!/bin/sh
+exit 3
+-- bin/brew --
+#!/bin/sh
+case "$1" in
+update) echo "brew start" >> "$WORK/order"; sleep 0.5 ;;
+upgrade) echo "1.1" > "$WORK/herdr-version"; echo "brew end" >> "$WORK/order" ;;
+list) cat "$WORK/herdr-version" 2>/dev/null || echo 1.0 ;;
+esac
+-- bin/omp --
+#!/bin/sh
+case "$1" in
+update) echo omp >> "$WORK/order" ;;
+--version) echo 1 ;;
+esac
+-- bin/herdr --
+#!/bin/sh
+case "$1" in
+--version) cat "$WORK/herdr-version" 2>/dev/null || echo 1.0 ;;
+reload) touch "$WORK/reloaded" ;;
+esac

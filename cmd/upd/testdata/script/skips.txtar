@@ -1,0 +1,30 @@
+# brew is skipped while Bazzite's uupd is updating, and the run still
+# succeeds. Without a terminal, jobs that need sudo are skipped too.
+chmod 0755 bin/brew
+chmod 0755 bin/systemctl
+chmod 0755 bin/apt-get
+chmod 0755 bin/dpkg-query
+
+exec upd brew
+stdout 'skip +brew .*uupd is already updating brew'
+
+exec upd -a
+stderr 'no terminal to ask for the sudo password; jobs that need sudo will be skipped'
+stdout 'skip +apt .*no sudo'
+
+-- root/etc/os-release --
+ID=ubuntu
+ID_LIKE=debian
+-- bin/systemctl --
+#!/bin/sh
+exit 0
+-- bin/brew --
+#!/bin/sh
+echo "brew should not run" >&2
+exit 1
+-- bin/apt-get --
+#!/bin/sh
+exit 1
+-- bin/dpkg-query --
+#!/bin/sh
+echo "pkg 1.0"

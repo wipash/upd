@@ -1,0 +1,28 @@
+version: 2
+
+builds:
+  - main: ./cmd/upd
+    binary: upd
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: darwin
+        goarch: amd64
+
+# Plain binaries named upd_<os>_<arch>, which is what self-update and
+# install.sh download.
+archives:
+  - formats: [binary]
+    name_template: "upd_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
