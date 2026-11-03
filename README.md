@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/wipash/upd/actions/workflows/ci.yml/badge.svg)](https://github.com/wipash/upd/actions/workflows/ci.yml)
 
-upd updates the software on a machine, running the updates in parallel. It covers OS packages, Homebrew, Flatpak, language toolchains, and command-line tools that update themselves, such as Claude Code and Codex. It is a single binary with a built-in list of update jobs, and you can add jobs or change the built-in ones in a TOML file.
+upd (`UP-dee`) updates all your stuff pretty quick.
 
 ## Install
 
@@ -10,50 +10,52 @@ upd updates the software on a machine, running the updates in parallel. It cover
 curl -fsSL https://raw.githubusercontent.com/wipash/upd/main/install.sh | sh
 ```
 
-This installs `~/.local/bin/upd`. Set `UPD_INSTALL_DIR` to install it somewhere else. From then on, upd updates itself along with everything else.
+This installs `upd` to `~/.local/bin/upd`. You can override that with `UPD_INSTALL_DIR`.
 
 ## Use
 
 ```
-upd                 run every job that applies to this machine
-upd -a              also run system jobs (apt, dnf, rpm-ostree, ...), asking for the sudo password once
-upd brew claude     run only these jobs, including system and disabled ones
-upd --dry-run       list every job, whether it would run, and why
-upd -v              print each job's output as it runs
-upd --plain         print one line per event instead of the live status board
+upd                 run all user-space updates
+upd -a              also run system jobs (apt, dnf, rpm-ostree, ...)
+upd brew claude     run only these jobs
+upd --dry-run       list every job
+upd -v              print each job's output
+upd --plain         print one line per event instead of the pretty dashboard
 upd --min-release-age 7d
-                    change the minimum release age for this run (0d turns it off)
+                    change the minimum release age for this run (defaults to 2d, set to 0d to turn it off)
 upd init            write a starter config file
-upd config          print the config, including the built-in jobs
+upd config          print the current config
 ```
 
 ## Built-in jobs
 
-A job runs only when its tool is installed. If a package manager such as Homebrew or apt installed a tool that can update itself, upd leaves that tool to the package manager.
+`upd` includes a bunch of built-in update jobs for common package managers and tools. It tries to be smart about how/when to update tools, e.g. not running a self-updating tool if it was installed by a package manager. It also checks whether a tool or package manager is installed/relevant before trying to update it.
 
-- System package managers, which run only with `-a`: apt, dnf, apk, pacman, zypper, snap, rpm-ostree (Fedora Atomic desktops such as Bazzite), and the AWS CLI when it is installed for all users.
-- Package managers: brew, flatpak, uv, pipx, rustup, mise, gh extensions, volta, and upd itself.
-- Tools that update themselves: claude, codex, copilot, omp, pi, herdr, agy, opencode, cursor-agent, amp, goose, deno, bun, pnpm, chezmoi, rclone, yt-dlp, gcloud, az, flyctl, ghcup, juliaup, sdkman and aws.
+Current built-in jobs:
 
-`upd --dry-run` shows which jobs apply to this machine and why the others do not. `upd config` shows each job's exact name and commands.
+- System package managers, which run only with `-a`: apt, dnf, apk, pacman, zypper, snap, rpm-ostree (Fedora Atomic desktops such as Bazzite).
+- User-space package managers: brew, flatpak, uv, pipx, rustup, mise, gh extensions, volta, and upd itself.
+- Self-updating tools: claude, codex, copilot, omp, pi, herdr, agy, opencode, cursor-agent, amp, goose, deno, bun, pnpm, chezmoi, rclone, yt-dlp, gcloud, az, flyctl, ghcup, juliaup, sdkman and aws.
+
+You can run `upd --dry-run` shows which jobs apply to this machine and which don't.
 
 ## Release age
 
-By default, upd asks tools to skip releases published less than 2 days ago, so a broken or malicious release has time to be noticed and pulled first. Only some tools support this: uv, pipx, mise, pnpm, packages installed with volta, and upd itself. The others, including brew, flatpak, the OS package managers and claude, always install the latest release.
+By default, upd asks tools to skip releases published less than 2 days ago. Only some tools/package managers support this though.
 
-Set `min_release_age` in the config to change the default, or `"0d"` to turn it off. If you already set a tool's own variable in your environment, such as `UV_EXCLUDE_NEWER`, upd leaves it alone.
+Set `min_release_age` in the config to change the default, or `"0d"` to turn it off.
 
 ## Configuration
 
-upd reads `~/.config/upd/config.toml`, or `$XDG_CONFIG_HOME/upd/config.toml` when that variable is set. The file is optional. `upd init` writes a starter file with comments.
+`upd` config is in `~/.config/upd/config.toml`, or `$XDG_CONFIG_HOME/upd/config.toml` if you have that set. The config file is optional. `upd init` makes you a starter file with comments.
 
 ```toml
-disable = ["snap"]                             # turn off built-in jobs
+disable = ["snap"]                             # turn off some built-in jobs
 min_release_age = "7d"                         # skip releases younger than 7 days
-post = ["notify-send upd \"exit $UPD_EXIT\""]  # run after every job has finished
+post = ["notify-send upd \"exit $UPD_EXIT\""]  # run once after all jobs have finished
 
 [commands]
-hermes = "hermes update --yes"                 # add a job
+hermes = "hermes update --yes"                 # add your own tools to update
 
 [commands.apt]                                 # change one field of a built-in job
 system = false                                 # run apt without -a
@@ -64,16 +66,14 @@ version = "herdr --version"
 on_change = "herdr server reload-config"
 ```
 
-When you use a built-in job's name, upd changes only the fields you write. Set a field to `""` or `[]` to clear it. `upd config` prints the merged result.
-
-### Job fields
+### Job config fields
 
 | field | meaning |
 |---|---|
-| `run` | The command, or a list of commands to run in order. upd stops at the first one that fails. |
+| `run` | The command, or a list of commands to run in order. upd stops the job as soon as one fails. |
 | `after` | Jobs to wait for. This job runs after they finish, whether they succeed or fail. |
-| `system` | Run the job only with `-a`, or when it is named on the command line. |
-| `sudo` | Run the job with sudo. upd asks for the password once, before any job starts. |
+| `system` | Run the job only when upd is invoked with `-a` |
+| `sudo` | Run the job with sudo. |
 | `when` | Conditions that decide whether the job applies to this machine (see below). |
 | `skip_if` | A command that upd runs when the job starts. If it exits with 0, upd skips the job and shows the command's output as the reason. |
 | `version` | A command that prints the installed version. upd runs it before and after the job and shows `old → new`. |
