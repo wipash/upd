@@ -1,21 +1,30 @@
 # Built-in jobs. This file uses exactly the schema available in the user
 # config, and the user config is merged over it by job name.
 
-# Where package managers put the programs they install. A self-updating tool
-# whose binary resolves (symlinks followed) to one of these paths is left to
-# its package manager: jobs with `when.managed = false` hide themselves.
-# `*` matches any run of characters, including "/".
-managed_paths = [
-  "*/Cellar/*", "*/Caskroom/*", "*/linuxbrew/*", "/opt/homebrew/*",
-  "/usr/bin/*", "/usr/sbin/*", "/usr/lib/*", "/usr/lib64/*", "/usr/libexec/*", "/usr/share/*", "/bin/*", "/sbin/*",
-  "/nix/*", "/snap/*",
-  "*/mise/installs/*", "*/.volta/*", "*/uv/tools/*", "*/pipx/venvs/*", "*/.cargo/bin/*", "*/go/bin/*",
-  "*/WinGet/Packages/*", "*/scoop/apps/*", "*/chocolatey/*",
-]
-
 # Jobs with release_age pass this to their tool, which then skips releases
 # published less than this many days ago.
 min_release_age = "2d"
+
+# Where each package manager puts the programs it installs. A self-updating
+# tool whose binary resolves (symlinks followed) to one of these paths is
+# left to that package manager: jobs with `when.managed = false` hide
+# themselves. `*` matches any run of characters, including "/".
+[managed_paths]
+Homebrew = ["*/Cellar/*", "*/Caskroom/*", "*/linuxbrew/*", "/opt/homebrew/*"]
+"the system package manager" = [
+  "/usr/bin/*", "/usr/sbin/*", "/usr/lib/*", "/usr/lib64/*", "/usr/libexec/*", "/usr/share/*", "/bin/*", "/sbin/*",
+]
+Nix = ["/nix/*"]
+snap = ["/snap/*"]
+mise = ["*/mise/installs/*"]
+Volta = ["*/.volta/*"]
+uv = ["*/uv/tools/*"]
+pipx = ["*/pipx/venvs/*"]
+cargo = ["*/.cargo/bin/*"]
+"go install" = ["*/go/bin/*"]
+WinGet = ["*/WinGet/Packages/*"]
+Scoop = ["*/scoop/apps/*"]
+Chocolatey = ["*/chocolatey/*"]
 
 # ---------------------------------------------------------------------------
 # System package managers (sudo, only with -a/--all)

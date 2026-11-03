@@ -17,11 +17,14 @@ func Format(c *Config) string {
 	if c.UserFile != "" {
 		userLabel = c.UserFile
 	}
-	fmt.Fprintf(&b, "managed_paths = %s\n", strList(c.ManagedPaths))
 	fmt.Fprintf(&b, "disable = %s\n", strList(c.Disable))
 	fmt.Fprintf(&b, "max_parallel = %d\n", c.MaxParallel)
 	fmt.Fprintf(&b, "min_release_age = \"%dd\"\n", c.MinRelease)
 	fmt.Fprintf(&b, "post = %s\n", script(c.Post))
+	b.WriteString("\n[managed_paths]\n")
+	for _, m := range c.ManagedPaths {
+		fmt.Fprintf(&b, "%s = %s\n", key(m.Label), strList(m.Globs))
+	}
 	for _, name := range c.Names() {
 		j := c.Jobs[name]
 		fmt.Fprintf(&b, "\n[commands.%s]\n", key(name))

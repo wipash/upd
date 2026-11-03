@@ -41,7 +41,7 @@ type Job struct {
 
 // Config is the merged result of the built-in catalog and the user file.
 type Config struct {
-	ManagedPaths []string
+	ManagedPaths []ManagedPath
 	Disable      []string
 	MaxParallel  int
 	MinRelease   int // days; 0 means no minimum
@@ -69,8 +69,8 @@ func Merge(builtin, user *File) (*Config, error) {
 		if f != builtin {
 			src = SourceUser
 		}
-		if f.ManagedPaths != nil {
-			cfg.ManagedPaths = *f.ManagedPaths
+		for _, m := range f.ManagedPaths {
+			cfg.ManagedPaths = setManaged(cfg.ManagedPaths, m)
 		}
 		if f.Disable != nil {
 			cfg.Disable = *f.Disable
@@ -165,6 +165,31 @@ func apply(j *Job, s *Spec, src string) {
 		j.ReleaseAge = mergeEnv(j.ReleaseAge, s.ReleaseAge)
 		set("release_age")
 	}
+}
+
+// setManaged replaces the paths for m.Label, adding the label if it is new.
+// An empty list removes the label.
+func setManaged(list []ManagedPath, m ManagedPath) []ManagedPath {
+	i := slices.IndexFunc(list, func(x ManagedPath) bool { return x.Label == m.Label })
+	switch {
+	case i < 0 && len(m.Globs) > 0:
+		return append(list, m)
+	case i >= 0 && len(m.Globs) > 0:
+		list[i] = m
+	case i >= 0:
+		list = slices.Delete(list, i, i+1)
+	}
+	return list
+}
+
+// ManagedBy returns the label of the first managed path that matches.
+func (c *Config) ManagedBy(match func(glob string) bool) string {
+	for _, m := range c.ManagedPaths {
+		if slices.ContainsFunc(m.Globs, match) {
+			return m.Label
+		}
+	}
+	return ""
 }
 
 // mergeEnv layers over onto base key by key. An empty value removes the key.

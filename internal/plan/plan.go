@@ -167,7 +167,7 @@ func Visible(cfg *config.Config, j *config.Job, f platform.Facts) string {
 	if bin == "" {
 		return ""
 	}
-	_, real, err := platform.Which(bin)
+	found, real, err := platform.Which(bin)
 	if err != nil {
 		return bin + " is not installed"
 	}
@@ -181,12 +181,20 @@ func Visible(cfg *config.Config, j *config.Job, f platform.Facts) string {
 		return ""
 	}
 	if w.Managed != nil {
-		g := matchAny(cfg.ManagedPaths)
-		if *w.Managed && g == "" {
+		// The path on PATH comes first, because a shim (such as Volta's) names
+		// the tool's manager while the file it links to may belong to another.
+		by, at := "", real
+		for _, p := range []string{found, real} {
+			if by = cfg.ManagedBy(func(g string) bool { return platform.MatchPath(g, p, windows) }); by != "" {
+				at = p
+				break
+			}
+		}
+		if *w.Managed && by == "" {
 			return bin + " was not installed by a package manager (" + real + ")"
 		}
-		if !*w.Managed && g != "" {
-			return bin + " is managed by a package manager (" + real + ")"
+		if !*w.Managed && by != "" {
+			return bin + " is managed by " + by + " (" + at + ")"
 		}
 	}
 	if len(w.Path) > 0 && matchAny(w.Path) == "" {

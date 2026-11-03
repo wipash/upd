@@ -103,10 +103,16 @@ type Spec struct {
 	FieldPos map[string]Position // position of each written field
 }
 
+// ManagedPath names a package manager and the paths it installs programs to.
+type ManagedPath struct {
+	Label string
+	Globs []string
+}
+
 // File is one decoded config file.
 type File struct {
 	Name         string
-	ManagedPaths *[]string
+	ManagedPaths []ManagedPath // nil when not written
 	Disable      *[]string
 	MaxParallel  *int
 	MinRelease   *int // days
@@ -182,9 +188,17 @@ func (d decoder) decodeFile(root *value) (*File, error) {
 		var err error
 		switch f.name {
 		case "managed_paths":
-			var l []string
-			l, err = d.strList(f.val, f.name)
-			out.ManagedPaths = &l
+			if f.val.kind != unstable.Table {
+				return nil, d.wrongType(f.val, f.name, `a table of package manager names and paths, such as { Homebrew = ["*/Cellar/*"] }`)
+			}
+			out.ManagedPaths = []ManagedPath{}
+			for _, mf := range f.val.fields {
+				var l []string
+				if l, err = d.strList(mf.val, f.name+"."+mf.name); err != nil {
+					break
+				}
+				out.ManagedPaths = append(out.ManagedPaths, ManagedPath{mf.name, l})
+			}
 		case "disable":
 			var l []string
 			l, err = d.strList(f.val, f.name)

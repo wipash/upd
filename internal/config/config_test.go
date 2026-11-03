@@ -260,3 +260,10 @@ release_age = { UV_EXCLUDE_NEWER = "" }
 		}
 	}
 }
+
+func TestManagedPathsMustBeATable(t *testing.T) {
+	_, err := merge(t, `managed_paths = ["/opt/*"]`)
+	if err == nil || !strings.Contains(err.Error(), "a table of package manager names and paths") {
+		t.Errorf("list form: %v", err)
+	}
+}

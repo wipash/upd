@@ -97,7 +97,7 @@ func TestVisibility(t *testing.T) {
 	if r := Visible(cfg, cfg.Jobs["claude"], f); r != "" {
 		t.Errorf("claude hidden: %s", r)
 	}
-	if r := Visible(cfg, cfg.Jobs["herdr"], f); !strings.Contains(r, "managed by a package manager") {
+	if r := Visible(cfg, cfg.Jobs["herdr"], f); !strings.Contains(r, "herdr is managed by Homebrew") {
 		t.Errorf("herdr via a brew symlink: %q", r)
 	}
 	if r := Visible(cfg, cfg.Jobs["codex"], f); r != "codex is not installed" {
@@ -158,5 +158,34 @@ on_change = "herdr server reload-config"
 	}
 	if _, err := Build(cfg, f, Options{Names: []string{"apt"}}); err == nil || !strings.Contains(err.Error(), "does not apply") {
 		t.Errorf("hidden name: %v", err)
+	}
+}
+
+// A Volta shim on PATH links to a binary that Homebrew installed. The tool
+// belongs to Volta, which is what the PATH location says.
+func TestManagedByShim(t *testing.T) {
+	dir := t.TempDir()
+	cellar := fakeBin(t, dir, "brew/Cellar/volta/2.0.2/bin", "volta-shim")
+	shims := filepath.Join(dir, "home/.volta/bin")
+	os.MkdirAll(shims, 0o755)
+	os.Symlink(filepath.Join(cellar, "volta-shim"), filepath.Join(shims, "pnpm"))
+	t.Setenv("PATH", shims)
+
+	cfg := load(t, "")
+	f := platform.Facts{GOOS: "linux"}
+	if r := Visible(cfg, cfg.Jobs["pnpm"], f); !strings.HasPrefix(r, "pnpm is managed by Volta (") {
+		t.Errorf("pnpm: %q", r)
+	}
+
+	cfg = load(t, `
+[managed_paths]
+Volta = []
+"my installer" = ["*/brew/*"]
+`)
+	if r := Visible(cfg, cfg.Jobs["pnpm"], f); !strings.HasPrefix(r, "pnpm is managed by Homebrew (") {
+		t.Errorf("pnpm with Volta removed: %q", r)
+	}
+	if got := cfg.ManagedPaths[len(cfg.ManagedPaths)-1].Label; got != "my installer" {
+		t.Errorf("last label = %q", got)
 	}
 }

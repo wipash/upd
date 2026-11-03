@@ -1,6 +1,6 @@
 # With no config, upd runs the built-ins whose tools are installed.
 # claude is installed in ~/.local/bin, so its job applies; herdr is a brew
-# install (under a Cellar directory), so its job is left to brew.
+# install (under a Cellar directory), so its job is left to Homebrew.
 chmod 0755 home/.local/bin/claude
 chmod 0755 brew/Cellar/herdr/1.0/bin/herdr
 symlink bin/claude -> ../home/.local/bin/claude
@@ -8,7 +8,7 @@ symlink bin/herdr -> ../brew/Cellar/herdr/1.0/bin/herdr
 
 exec upd --dry-run
 stdout '^claude +will run$'
-stdout '^herdr +hidden +herdr is managed by a package manager'
+stdout '^herdr +hidden +herdr is managed by Homebrew'
 stdout '^brew +hidden +brew is not installed$'
 stdout '^apt +hidden +only for [a-z, ]+$'
 
