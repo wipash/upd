@@ -187,3 +187,27 @@ on_change = "x restart"
 		}
 	}
 }
+
+func TestBuiltinGroupsListEveryJobOnce(t *testing.T) {
+	b, err := Builtin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	for _, g := range BuiltinGroups {
+		for _, n := range g.Names {
+			if seen[n] {
+				t.Errorf("%s is listed twice", n)
+			}
+			seen[n] = true
+			if b.Jobs[n] == nil {
+				t.Errorf("%s is listed but is not a built-in job", n)
+			}
+		}
+	}
+	for _, n := range b.Order {
+		if !seen[n] {
+			t.Errorf("built-in job %s is missing from BuiltinGroups", n)
+		}
+	}
+}

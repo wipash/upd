@@ -1,6 +1,6 @@
 # upd
 
-Updates everything on a machine in parallel: OS packages, Homebrew, Flatpak, language toolchains, and self-updating CLIs such as Claude Code and Codex. A single static binary, with a built-in catalog of update jobs that you can override and extend from a TOML file.
+upd updates the software on a machine, running the updates in parallel. It covers OS packages, Homebrew, Flatpak, language toolchains, and command-line tools that update themselves, such as Claude Code and Codex. It is a single binary with a built-in list of update jobs, and you can add jobs or change the built-in ones in a TOML file.
 
 ## Install
 
@@ -8,85 +8,80 @@ Updates everything on a machine in parallel: OS packages, Homebrew, Flatpak, lan
 curl -fsSL https://raw.githubusercontent.com/wipash/upd/main/install.sh | sh
 ```
 
-This installs `~/.local/bin/upd` (set `UPD_INSTALL_DIR` to change it). After that, `upd` updates itself as one of its jobs.
+This installs `~/.local/bin/upd`. Set `UPD_INSTALL_DIR` to install it somewhere else. From then on, upd updates itself along with everything else.
 
 ## Use
 
 ```
 upd                 run every job that applies to this machine
-upd -a              also run system jobs (apt, dnf, rpm-ostree, ...), asking for sudo once
-upd brew claude     run only these jobs (even system or disabled ones)
+upd -a              also run system jobs (apt, dnf, rpm-ostree, ...), asking for the sudo password once
+upd brew claude     run only these jobs, including system and disabled ones
 upd --dry-run       list every job, whether it would run, and why
-upd -v              print every job's output, prefixed with the job name
-upd --plain         line-by-line output instead of the live status board
-upd init            write a starter config
-upd config          print the merged config, marking where each field came from
-upd config path     print the config file path
+upd -v              print each job's output as it runs
+upd --plain         print one line per event instead of the live status board
+upd init            write a starter config file
+upd config          print the config, including the built-in jobs
 ```
 
-Exit codes: 0 success, 1 a job (or `on_change`, or `post`) failed, 2 config or usage error, 3 another upd run is in progress, 130 interrupted.
+## Built-in jobs
 
-Logs for each job are kept in `~/.local/state/upd/logs/<run>/` for the last 10 runs.
+A job runs only when its tool is installed. If a package manager such as Homebrew or apt installed a tool that can update itself, upd leaves that tool to the package manager.
+
+- System package managers, which run only with `-a`: apt, dnf, apk, pacman, zypper, snap, rpm-ostree (Fedora Atomic desktops such as Bazzite), and the AWS CLI when it is installed for all users.
+- Package managers: brew, flatpak, uv, pipx, rustup, mise, gh extensions, volta, and upd itself.
+- Tools that update themselves: claude, codex, copilot, omp, pi, herdr, agy, opencode, cursor-agent, amp, goose, deno, bun, pnpm, chezmoi, rclone, yt-dlp, gcloud, az, flyctl, ghcup, juliaup, sdkman and aws.
+
+`upd --dry-run` shows which jobs apply to this machine and why the others do not. `upd config` shows each job's exact name and commands.
 
 ## Configuration
 
-`$XDG_CONFIG_HOME/upd/config.toml`, by default `~/.config/upd/config.toml` (`%AppData%\upd\config.toml` on Windows). The file is optional.
+upd reads `~/.config/upd/config.toml`, or `$XDG_CONFIG_HOME/upd/config.toml` when that variable is set, or `%AppData%\upd\config.toml` on Windows. The file is optional. `upd init` writes a starter file with comments.
 
 ```toml
-disable = ["snap"]                              # built-in jobs to turn off
-post = ["notify-send upd \"exit $UPD_EXIT\""]   # run after every job has finished
+disable = ["snap"]                             # turn off built-in jobs
+post = ["notify-send upd \"exit $UPD_EXIT\""]  # run after every job has finished
 
 [commands]
-no-mistakes = "no-mistakes update --force"      # a job can be just a command
-hermes = { run = "hermes update --yes", env = { GIT_SSH_COMMAND = "ssh -o BatchMode=yes" } }
+hermes = "hermes update --yes"                 # add a job
 
-[commands.apt]                                  # a built-in's name: override only these fields
-system = false
+[commands.apt]                                 # change one field of a built-in job
+system = false                                 # run apt without -a
 
-[commands.herdr-restart]                        # no run: react to another job's changes
+[commands.herdr-restart]                       # reload herdr when brew upgrades it
 after = ["brew"]
 version = "herdr --version"
 on_change = "herdr server reload-config"
 ```
 
+When you use a built-in job's name, upd changes only the fields you write. Set a field to `""` or `[]` to clear it. `upd config` prints the merged result.
+
 ### Job fields
 
 | field | meaning |
 |---|---|
-| `run` | Command, or list of commands run in order (stops at the first failure). |
-| `after` | Jobs this one waits for. Ordering only: it runs whatever their result. |
-| `system` | Only run with `-a`, or when named. |
-| `sudo` | Run with sudo. upd asks for the password once, before anything starts. |
-| `when` | Whether the job applies to this machine (see below). If not, it is hidden. |
-| `skip_if` | Checked when the job starts; exit 0 skips it, and its output is the reason. |
-| `version` | Prints the installed version. upd compares it before and after to report `old → new`. |
-| `on_change` | Runs after the job when `version` changed. |
-| `env`, `cwd`, `shell` | Environment, working directory (default `~`), shell (default `sh -c`, `pwsh` on Windows). |
-| `timeout` | Default `15m`, none for system jobs. `"0"` means none. |
-| `ok_exit_codes` | Exit codes that count as success. Default `[0]`. |
+| `run` | The command, or a list of commands to run in order. upd stops at the first one that fails. |
+| `after` | Jobs to wait for. This job runs after they finish, whether they succeed or fail. |
+| `system` | Run the job only with `-a`, or when it is named on the command line. |
+| `sudo` | Run the job with sudo. upd asks for the password once, before any job starts. |
+| `when` | Conditions that decide whether the job applies to this machine (see below). |
+| `skip_if` | A command that upd runs when the job starts. If it exits with 0, upd skips the job and shows the command's output as the reason. |
+| `version` | A command that prints the installed version. upd runs it before and after the job and shows `old → new`. |
+| `on_change` | A command to run after the job when the output of `version` changed. |
+| `env`, `cwd`, `shell` | Environment variables, the working directory (default `~`), and the shell (default `sh -c`, or `pwsh` on Windows). |
+| `timeout` | Defaults to `15m`, and to no timeout for system jobs. `"0"` turns it off. |
+| `ok_exit_codes` | Exit codes that count as success. Defaults to `[0]`. |
 
-Any command can differ per OS: `run = { unix = "...", windows = "..." }` (keys `unix`, `linux`, `darwin`, `windows`).
+A command can differ by OS, as in `run = { unix = "...", windows = "..." }`. The keys are `unix`, `linux`, `darwin` and `windows`.
 
 ### `when`
 
-| predicate | true when |
+| condition | the job applies when |
 |---|---|
-| `has = "prog"` | `prog` is on PATH. Defaults to the first word of `run`. |
-| `managed = false` | `prog` was not installed by a package manager: its real path (symlinks followed) does not match any of the top-level `managed_paths`. |
-| `path`, `path_not` | Its real path matches / does not match one of these globs (`*` matches across `/`). |
-| `os`, `distro` | The OS is one of these; `/etc/os-release` `ID` or `ID_LIKE` contains one of these. |
-| `wsl`, `ssh` | Running inside WSL / over SSH. |
-| `exists`, `missing` | A path exists / does not exist. |
-
-### Overriding built-ins
-
-Your config is merged over the built-in catalog by job name, field by field. A field you do not write keeps the built-in value; writing a job as a plain string replaces only its `run`. Lists are replaced whole, `env` merges key by key, and `""` or `[]` clears a field. See the catalog in [`internal/config/builtin.toml`](internal/config/builtin.toml) or run `upd config`.
-
-## Development
-
-```sh
-go test ./...
-go run ./cmd/upd --dry-run
-```
-
-End-to-end tests in `cmd/upd/testdata/script` run the real binary against fake package managers. Releases are built by goreleaser when a `v*` tag is pushed.
+| `has = "prog"` | `prog` is on PATH. It defaults to the first word of `run`. |
+| `managed = false` | A package manager did not install `prog`. |
+| `path`, `path_not` | The real path of `prog` matches, or does not match, one of these globs. |
+| `os` | The OS (`linux`, `darwin` or `windows`) is in this list. |
+| `distro` | `ID` or `ID_LIKE` in `/etc/os-release` includes a name in this list. |
+| `wsl = true` | upd is running inside WSL. `false` means it is not. |
+| `ssh = true` | upd is running in an SSH session. `false` means it is not. |
+| `exists`, `missing` | This path exists, or does not exist. |

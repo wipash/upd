@@ -162,15 +162,14 @@ func cmdInit() int {
 		fmt.Fprintf(os.Stderr, "upd: %s already exists\n", path)
 		return exitUsage
 	}
-	cfg, _, code := loadConfig()
-	if cfg == nil {
+	if _, _, code := loadConfig(); code != exitOK {
 		return code
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "upd:", err)
 		return exitFailed
 	}
-	if err := os.WriteFile(path, []byte(starterConfig(cfg)), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(starterConfig()), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "upd:", err)
 		return exitFailed
 	}
@@ -178,32 +177,40 @@ func cmdInit() int {
 	return exitOK
 }
 
-func starterConfig(cfg *config.Config) string {
+func starterConfig() string {
 	var b strings.Builder
-	b.WriteString(`# upd configuration. Built-in jobs run automatically when they apply to
-# this machine; see them with "upd config" and "upd --dry-run".
+	b.WriteString(`# upd configuration.
 #
-# Built-in jobs: ` + wrapList(cfg.Names(), "#   ") + `
-
-# Turn built-in jobs off by name.
+# Built-in jobs run when their tool is installed. "upd --dry-run" shows which
+# ones apply to this machine, and "upd config" shows what each one runs.
+`)
+	for _, g := range config.BuiltinGroups {
+		b.WriteString("#\n# " + g.Title + ":\n")
+		for _, line := range wrap(g.Names, 74) {
+			b.WriteString("#   " + line + "\n")
+		}
+	}
+	b.WriteString(`
+# Turn off built-in jobs by name.
 # disable = ["snap"]
 
-# Commands run once after every job has finished. They see UPD_UPDATED,
-# UPD_FAILED (job names) and UPD_EXIT.
+# Commands to run once after every job has finished. They can read the job
+# names in UPD_UPDATED and UPD_FAILED, and upd's exit code in UPD_EXIT.
 # post = ["notify-send upd \"exit $UPD_EXIT\""]
 
 [commands]
-# A job is a command string, or a table:
-# no-mistakes = "no-mistakes update --force"
-# hermes = { run = "hermes update --yes", after = ["brew"] }
+# Add a job as a command:
+# hermes = "hermes update --yes"
 #
-# Fields: run, shell, cwd, env, after, system, sudo, when, skip_if,
-# version, on_change, timeout, ok_exit_codes. Using a built-in job's name
-# overrides only the fields you write:
+# Or as a table with any of these fields: run, shell, cwd, env, after, system,
+# sudo, when, skip_if, version, on_change, timeout, ok_exit_codes.
+#
+# Using a built-in job's name changes only the fields you write:
 # [commands.apt]
 # system = false
 #
-# A job without run watches another job's work:
+# A job without run only compares a version before and after the jobs it
+# waits for. This one reloads herdr when brew upgrades it:
 # [commands.herdr-restart]
 # after = ["brew"]
 # version = "herdr --version"
@@ -212,22 +219,29 @@ func starterConfig(cfg *config.Config) string {
 	return b.String()
 }
 
-func wrapList(names []string, indent string) string {
-	var b strings.Builder
-	col := 80
+// wrap joins names with ", " into lines of at most width columns.
+func wrap(names []string, width int) []string {
+	var lines []string
+	line := ""
 	for i, n := range names {
-		if col+len(n)+2 > 76 {
-			b.WriteString("\n" + indent)
-			col = len(indent)
-		}
-		b.WriteString(n)
-		col += len(n)
+		item := n
 		if i < len(names)-1 {
-			b.WriteString(", ")
-			col += 2
+			item += ","
+		}
+		switch {
+		case line == "":
+			line = item
+		case len(line)+1+len(item) > width:
+			lines = append(lines, line)
+			line = item
+		default:
+			line += " " + item
 		}
 	}
-	return b.String()
+	if line != "" {
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func cmdRun(o options) int {
