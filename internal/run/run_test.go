@@ -43,6 +43,9 @@ func TestDescribeChange(t *testing.T) {
 		{"same", "same", ""},
 		{"deno 2.1.0\nv8 13\ntypescript 5.6", "deno 2.1.1\nv8 13\ntypescript 5.6", "2.1.0 → 2.1.1"},
 		{"a 1\nb 1\nc 1\nd 1", "a 1\nb 2\nc 1\nd 2", "2 changed"},
+		{"a 1\nb 1\nc 1\nd 1", "d 1\nc 1\nb 1\na 1", ""},
+		{"a 1\nb 1\nc 1\nd 1", "a 1\nb 1\nc 1\nd 1\ne 1", "1 added"},
+		{"a 1\nb 1\nc 1\nd 1", "a 1\nb 1\nc 1", "1 removed"},
 	}
 	for _, tt := range tests {
 		if got := describeChange(tt.old, tt.cur); got != tt.want {

@@ -8,7 +8,8 @@ import (
 
 // describeChange summarises how version output changed. Short outputs show
 // the first differing line as "old → new", with words they share removed;
-// longer outputs, such as package lists, show how many lines are new.
+// longer outputs, such as package lists, compare lines as a set and count
+// how many changed.
 func describeChange(old, cur string) string {
 	ol, nl := splitLines(old), splitLines(cur)
 	if len(ol) <= 3 && len(nl) <= 3 {
@@ -20,20 +21,27 @@ func describeChange(old, cur string) string {
 		}
 		return ""
 	}
-	n := 0
+	added, removed := 0, 0
 	for _, l := range nl {
 		if !slices.Contains(ol, l) {
-			n++
+			added++
 		}
 	}
-	if n == 0 {
-		n = len(ol) - len(nl)
-		if n < 0 {
-			n = -n
+	for _, l := range ol {
+		if !slices.Contains(nl, l) {
+			removed++
 		}
-		return strconv.Itoa(n) + " removed"
 	}
-	return strconv.Itoa(n) + " changed"
+	switch {
+	case added > 0 && removed > 0:
+		return strconv.Itoa(max(added, removed)) + " changed"
+	case added > 0:
+		return strconv.Itoa(added) + " added"
+	case removed > 0:
+		return strconv.Itoa(removed) + " removed"
+	}
+	// Same lines in a different order.
+	return ""
 }
 
 func splitLines(s string) []string {
