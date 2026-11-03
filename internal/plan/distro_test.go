@@ -3,6 +3,7 @@ package plan
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 
@@ -12,6 +13,9 @@ import (
 // Each fixture is a real /etc/os-release. The test checks which system
 // package manager job applies, with every package manager installed.
 func TestDistroDetection(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("os-release is only read on Linux")
+	}
 	bin := t.TempDir()
 	for _, b := range []string{"apt-get", "dnf", "apk", "pacman", "zypper", "rpm-ostree"} {
 		fakeBin(t, bin, "", b)

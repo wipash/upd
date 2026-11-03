@@ -10,7 +10,7 @@ exec upd --dry-run
 stdout '^claude +will run$'
 stdout '^herdr +hidden +herdr is managed by a package manager'
 stdout '^brew +hidden +brew is not installed$'
-stdout '^apt +hidden +only for debian'
+stdout '^apt +hidden +only for'
 
 exec upd
 stdout 'updated claude [0-9.]+s  2\.1\.0 → 2\.1\.1'

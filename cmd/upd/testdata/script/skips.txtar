@@ -1,3 +1,6 @@
+# The uupd check and the sudo jobs tested here are Linux-only.
+[!linux] skip
+
 # brew is skipped while Bazzite's uupd is updating, and the run still
 # succeeds. Without a terminal, jobs that need sudo are skipped too.
 chmod 0755 bin/brew
