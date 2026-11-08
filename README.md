@@ -39,6 +39,8 @@ Current built-in jobs:
 - User-space package managers: brew, flatpak, uv, pipx, rustup, mise, gh extensions, volta, and upd itself.
 - Self-updating tools: claude, codex, copilot, omp, pi, herdr, agy, opencode, cursor-agent, amp, goose, deno, bun, pnpm, chezmoi, rclone, yt-dlp, gcloud, az, flyctl, ghcup, juliaup, sdkman and aws.
 
+Volta updates allow each installed package to run its own install scripts, preserving npm's existing `allow-scripts` approvals. With npm versions that support `strict-allow-scripts`, unapproved dependency scripts fail the update instead of silently leaving a tool incomplete. These settings apply only to each install; upd does not edit your npm configuration. The Volta job also checks that pnpm starts after updating it.
+
 You can run `upd --dry-run` shows which jobs apply to this machine and which don't.
 
 ## Release age
