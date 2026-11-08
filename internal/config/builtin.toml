@@ -179,7 +179,16 @@ list=$(volta list --format plain)
 major=$(printf '%s\n' "$list" | awk '$1 == "runtime" && /\(default\)/ { sub(/^node@/, "", $2); split($2, v, "."); print v[1] }')
 if [ -n "$major" ]; then volta install "node@$major"; fi
 for tool in $(printf '%s\n' "$list" | awk '$1 == "package-manager" || $1 == "package" { sub(/@[^@]*$/, "", $2); print $2 }'); do
-  volta install "$tool@latest"
+  # Use Volta's npm configuration, including any existing script approvals.
+  # Read it each time because this loop can upgrade npm itself.
+  allowed_scripts=$(volta run -- npm config get allow-scripts)
+  case "$allowed_scripts" in undefined|null) allowed_scripts= ;; esac
+  # npm 12 otherwise reports success while leaving native tools unbuilt.
+  npm_config_allow_scripts="${allowed_scripts:+$allowed_scripts,}$tool" \
+    npm_config_strict_allow_scripts=true \
+    volta install "$tool@latest"
+  # pnpm's placeholder cannot be executed by Volta if setup was skipped.
+  if [ "$tool" = pnpm ]; then volta run -- pnpm --version; fi
 done
 ''' }
 
