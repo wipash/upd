@@ -178,18 +178,64 @@ set -e
 list=$(volta list --format plain)
 major=$(printf '%s\n' "$list" | awk '$1 == "runtime" && /\(default\)/ { sub(/^node@/, "", $2); split($2, v, "."); print v[1] }')
 if [ -n "$major" ]; then volta install "node@$major"; fi
+failed=
+unapproved=
+blocked_by=
+allowed_scripts() {
+  a=$(volta run -- npm config get allow-scripts)
+  case "$a" in undefined|null) a= ;; esac
+  printf '%s' "$a"
+}
 for tool in $(printf '%s\n' "$list" | awk '$1 == "package-manager" || $1 == "package" { sub(/@[^@]*$/, "", $2); print $2 }'); do
   # Use Volta's npm configuration, including any existing script approvals.
   # Read it each time because this loop can upgrade npm itself.
-  allowed_scripts=$(volta run -- npm config get allow-scripts)
-  case "$allowed_scripts" in undefined|null) allowed_scripts= ;; esac
+  allowed=$(allowed_scripts)
+  # Volta prints npm's error only with --verbose. Its own [verbose] lines are
+  # noise, its "confirm the package is valid" advice is wrong here, and npm's
+  # per-package "Allow them with" advice is replaced by the combined command
+  # printed after the loop.
   # npm 12 otherwise reports success while leaving native tools unbuilt.
-  npm_config_allow_scripts="${allowed_scripts:+$allowed_scripts,}$tool" \
+  if out=$(npm_config_allow_scripts="${allowed:+$allowed,}$tool" \
     npm_config_strict_allow_scripts=true \
-    volta install "$tool@latest"
+    volta install --verbose "$tool@latest" 2>&1); then
+    printf '%s\n' "$out" | awk '!/^\[verbose\]/ && !/^Please confirm the package is valid/ && !/^npm error Allow them with/ && NF'
+  else
+    printf '%s\n' "$out" | awk '!/^\[verbose\]/ && !/^Please confirm the package is valid/ && !/^npm error Allow them with/ && NF' >&2
+    # Each blocked dependency is listed as "npm error   name@version (scripts)".
+    deps=$(printf '%s\n' "$out" | awk '/not covered by allowScripts/ { f = 1; next } f && $1 == "npm" && $2 == "error" && $4 ~ /^\(/ { sub(/@[^@]*$/, "", $3); print $3; next } { f = 0 }')
+    if [ -n "$deps" ]; then
+      unapproved="$unapproved $tool"
+      blocked_by="$blocked_by $deps"
+    else
+      failed="$failed $tool"
+    fi
+    continue
+  fi
   # pnpm's placeholder cannot be executed by Volta if setup was skipped.
-  if [ "$tool" = pnpm ]; then volta run -- pnpm --version; fi
+  if [ "$tool" = pnpm ] && ! volta run -- pnpm --version; then failed="$failed $tool"; fi
 done
+if [ -n "$unapproved" ]; then
+  # "npm config set" replaces the list, so the command must include
+  # existing approvals and every package's blocked dependencies.
+  # Assigned on its own so that set -e stops the job if npm cannot report
+  # the existing approvals, instead of printing a command that drops them.
+  existing=$(allowed_scripts)
+  approve=$(printf '%s %s\n' "$(printf '%s' "$existing" | tr ',' ' ')" "$blocked_by" | tr ' ' '\n' | awk 'NF && !seen[$0]++' | paste -sd, -)
+  {
+    echo
+    echo "Some packages depend on install scripts that npm has not been allowed to run:"
+    printf '%s\n' $blocked_by | awk '!seen[$0]++ { print "  " $0 }'
+    echo "To allow them, keeping your existing approvals, run:"
+    echo "  npm config set allow-scripts=$approve --location=user"
+  } >&2
+fi
+if [ -n "$unapproved$failed" ]; then
+  summary=
+  if [ -n "$unapproved" ]; then summary="install scripts need approval for:$unapproved"; fi
+  if [ -n "$failed" ]; then summary="${summary:+$summary; }failed to update:$failed"; fi
+  echo "$summary" >&2
+  exit 1
+fi
 ''' }
 
 [commands.upd]
