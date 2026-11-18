@@ -186,21 +186,26 @@ allowed_scripts() {
   case "$a" in undefined|null) a= ;; esac
   printf '%s' "$a"
 }
+# Volta prints npm's error only with --verbose. Its own [verbose] lines are
+# noise, and its "confirm the package is valid" advice is wrong here. npm's
+# warning that the .npmrc approvals are ignored is wrong because they are
+# passed along with the tool, and its per-package "Allow them with" advice is
+# replaced by the combined command printed after the loop.
+show_install_output() {
+  printf '%s\n' "$1" | awk '!/^\[verbose\]/ && !/^Please confirm the package is valid/ && !/^npm warn install-scripts \.npmrc allow-scripts setting is being ignored/ && !/^npm error Allow them with/ && NF'
+}
 for tool in $(printf '%s\n' "$list" | awk '$1 == "package-manager" || $1 == "package" { sub(/@[^@]*$/, "", $2); print $2 }'); do
   # Use Volta's npm configuration, including any existing script approvals.
   # Read it each time because this loop can upgrade npm itself.
   allowed=$(allowed_scripts)
-  # Volta prints npm's error only with --verbose. Its own [verbose] lines are
-  # noise, its "confirm the package is valid" advice is wrong here, and npm's
-  # per-package "Allow them with" advice is replaced by the combined command
-  # printed after the loop.
-  # npm 12 otherwise reports success while leaving native tools unbuilt.
+  # Strict mode makes npm 12 fail instead of reporting success while leaving
+  # native tools unbuilt.
   if out=$(npm_config_allow_scripts="${allowed:+$allowed,}$tool" \
     npm_config_strict_allow_scripts=true \
     volta install --verbose "$tool@latest" 2>&1); then
-    printf '%s\n' "$out" | awk '!/^\[verbose\]/ && !/^Please confirm the package is valid/ && !/^npm error Allow them with/ && NF'
+    show_install_output "$out"
   else
-    printf '%s\n' "$out" | awk '!/^\[verbose\]/ && !/^Please confirm the package is valid/ && !/^npm error Allow them with/ && NF' >&2
+    show_install_output "$out" >&2
     # Each blocked dependency is listed as "npm error   name@version (scripts)".
     deps=$(printf '%s\n' "$out" | awk '/not covered by allowScripts/ { f = 1; next } f && $1 == "npm" && $2 == "error" && $4 ~ /^\(/ { sub(/@[^@]*$/, "", $3); print $3; next } { f = 0 }')
     if [ -n "$deps" ]; then

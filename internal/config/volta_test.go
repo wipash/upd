@@ -39,6 +39,10 @@ case "$*" in
   'install node@24') ;;
   'install --verbose npm@latest'|'install --verbose @example/cli@latest'|'install --verbose pnpm@latest')
     echo '[verbose] noise'
+    case "$SCENARIO" in
+      old-npm|mixed-failures) ;;
+      *) echo 'npm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line' >&2 ;;
+    esac
     tool=${3%@latest}
     if [ "$SCENARIO" = mixed-failures ]; then
       case "$tool" in
@@ -99,8 +103,10 @@ esac
 			if string(installed) != wantInstalled {
 				t.Fatalf("installed tools = %q, want %q; output: %s", installed, wantInstalled, out)
 			}
-			if strings.Contains(string(out), "[verbose]") {
-				t.Fatalf("output contains Volta's verbose lines: %s", out)
+			for _, noise := range []string{"[verbose]", "allow-scripts setting is being ignored"} {
+				if strings.Contains(string(out), noise) {
+					t.Fatalf("output contains %q: %s", noise, out)
+				}
 			}
 			wantLast := map[string]string{
 				"unapproved-dependency": "install scripts need approval for: @example/cli",
