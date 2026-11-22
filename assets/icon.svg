@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="upd">
+  <title>upd</title>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="#0F172A" stroke="#334155" stroke-width="4"/>
+  <path fill="#0891B2" d="M64 63L98 91V106L64 78L30 106V91Z"/>
+  <path fill="#22D3EE" d="M64 41L98 69V84L64 56L30 84V69Z"/>
+  <path fill="#22C55E" d="M64 19L98 47V62L64 34L30 62V47Z"/>
+</svg>

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 315 128" width="315" height="128" role="img" aria-label="upd">
+  <title>upd</title>
+  <!-- Stacked chevrons (deep cyan -> bright cyan -> terminal green) -->
+  <path fill="#0891B2" d="M53 65L90 96V113L53 82L16 113V96Z"/>
+  <path fill="#22D3EE" d="M53 41L90 72V89L53 58L16 89V72Z"/>
+  <path fill="#22C55E" d="M53 17L90 48V65L53 34L16 65V48Z"/>
+  <!-- Geometric lowercase wordmark: upd -->
+  <g fill="#F8FAFC" fill-rule="evenodd">
+    <!-- u -->
+    <path d="M114 40H127.5V69A13.5 13.5 0 0 0 154.5 69V40H168V94H154.5V91.7A27 26.2 0 0 1 114 69Z"/>
+    <!-- p -->
+    <path d="M181 40H194.5V42.75A26 28 0 1 1 194.5 91.25V114H181ZM207.5 52.2A13 14.8 0 1 0 207.5 81.8A13 14.8 0 1 0 207.5 52.2Z"/>
+    <!-- d -->
+    <path d="M298.5 14H285V42.75A26 28 0 1 0 285 91.25V94H298.5ZM272 52.2A13 14.8 0 1 1 272 81.8A13 14.8 0 1 1 272 52.2Z"/>
+  </g>
+</svg>
