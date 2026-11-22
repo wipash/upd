@@ -189,10 +189,16 @@ allowed_scripts() {
 # Volta prints npm's error only with --verbose. Its own [verbose] lines are
 # noise, and its "confirm the package is valid" advice is wrong here. npm's
 # warning that the .npmrc approvals are ignored is wrong because they are
-# passed along with the tool, and its per-package "Allow them with" advice is
-# replaced by the combined command printed after the loop.
+# passed along with the tool. Its per-package "Allow them with" advice is
+# hidden only when the combined command will be printed after the loop.
 show_install_output() {
-  printf '%s\n' "$1" | awk '!/^\[verbose\]/ && !/^Please confirm the package is valid/ && !/^npm warn install-scripts \.npmrc allow-scripts setting is being ignored/ && !/^npm error Allow them with/ && NF'
+  printf '%s\n' "$1" | awk -v hide_allow="${2-}" '
+    /^\[verbose\]/ { next }
+    /^Please confirm the package is valid/ { next }
+    /^npm warn install-scripts \.npmrc allow-scripts setting is being ignored/ { next }
+    hide_allow != "" && /^npm error Allow them with/ { next }
+    NF
+  '
 }
 for tool in $(printf '%s\n' "$list" | awk '$1 == "package-manager" || $1 == "package" { sub(/@[^@]*$/, "", $2); print $2 }'); do
   # Use Volta's npm configuration, including any existing script approvals.
@@ -205,13 +211,15 @@ for tool in $(printf '%s\n' "$list" | awk '$1 == "package-manager" || $1 == "pac
     volta install --verbose "$tool@latest" 2>&1); then
     show_install_output "$out"
   else
-    show_install_output "$out" >&2
     # Each blocked dependency is listed as "npm error   name@version (scripts)".
     deps=$(printf '%s\n' "$out" | awk '/not covered by allowScripts/ { f = 1; next } f && $1 == "npm" && $2 == "error" && $4 ~ /^\(/ { sub(/@[^@]*$/, "", $3); print $3; next } { f = 0 }')
     if [ -n "$deps" ]; then
+      show_install_output "$out" 1 >&2
       unapproved="$unapproved $tool"
-      blocked_by="$blocked_by $deps"
+      blocked_by="${blocked_by:+$blocked_by
+}$deps"
     else
+      show_install_output "$out" >&2
       failed="$failed $tool"
     fi
     continue
@@ -225,13 +233,23 @@ if [ -n "$unapproved" ]; then
   # Assigned on its own so that set -e stops the job if npm cannot report
   # the existing approvals, instead of printing a command that drops them.
   existing=$(allowed_scripts)
-  approve=$(printf '%s %s\n' "$(printf '%s' "$existing" | tr ',' ' ')" "$blocked_by" | tr ' ' '\n' | awk 'NF && !seen[$0]++' | paste -sd, -)
+  blocked_list=$(printf '%s\n' "$blocked_by" | awk 'NF && !seen[$0]++')
+  approve=$(
+    {
+      printf '%s\n' "$existing" | awk -F, '{ for (i = 1; i <= NF; i++) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", $i); if ($i != "") print $i } }'
+      printf '%s\n' "$blocked_list"
+    } | awk '!seen[$0]++' | paste -sd, -
+  )
+  case "$approve" in
+    *[![:alnum:]@._/,+-]*) approve_arg="'$approve'" ;;
+    *) approve_arg="$approve" ;;
+  esac
   {
     echo
     echo "Some packages depend on install scripts that npm has not been allowed to run:"
-    printf '%s\n' $blocked_by | awk '!seen[$0]++ { print "  " $0 }'
+    printf '%s\n' "$blocked_list" | awk '{ print "  " $0 }'
     echo "To allow them, keeping your existing approvals, run:"
-    echo "  npm config set allow-scripts=$approve --location=user"
+    echo "  npm config set allow-scripts=$approve_arg --location=user"
   } >&2
 fi
 if [ -n "$unapproved$failed" ]; then
