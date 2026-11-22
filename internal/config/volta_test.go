@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,40 +16,94 @@ func TestVoltaInstallScripts(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Volta update job is Unix-only")
 	}
-	for _, scenario := range []string{"approved", "unapproved-dependency", "broken-pnpm", "old-npm"} {
+	for _, scenario := range []string{
+		"approved",
+		"unapproved-dependency",
+		"broken-pnpm",
+		"old-npm",
+		"mixed-failures",
+		"changed-npm-error",
+		"config-get-failed",
+	} {
 		t.Run(scenario, func(t *testing.T) {
 			dir := t.TempDir()
 			stub := `#!/bin/sh
 set -eu
+blocked() {
+  echo 'npm error code ESTRICTALLOWSCRIPTS' >&2
+  echo 'npm error --strict-allow-scripts: some package(s) have install scripts not covered by allowScripts:' >&2
+  for dep in "$@"; do echo "npm error   $dep (install: node-gyp rebuild; postinstall: node x.js)" >&2; done
+  echo 'npm error Allow them with --allow-scripts' >&2
+  echo "error: Could not install package '$tool@latest'" >&2
+  echo 'Please confirm the package is valid and run with --verbose for more diagnostics.' >&2
+  exit 1
+}
 case "$*" in
   'list --format plain')
     printf '%s\n' 'runtime node@24.1.0 (default)' 'package-manager npm@12.2.2 (default)' 'package @example/cli@1.0.0 / cli / node@24.1.0 (default)' 'package pnpm@12.18.0 / pnpm / node@24.1.0 (default)'
     ;;
   'run -- npm config get allow-scripts')
-    if [ "$SCENARIO" = old-npm ]; then echo undefined; else echo approved-helper; fi
+    case "$SCENARIO" in
+      old-npm|mixed-failures) echo undefined ;;
+      unapproved-dependency) printf 'esbuild@0.28.1 || 0.28.2,\tapproved-helper\n' ;;
+      config-get-failed)
+        if [ -f "$INSTALLED" ] && grep -qx pnpm "$INSTALLED"; then
+          echo 'npm error failed to read config' >&2
+          exit 1
+        fi
+        echo approved-helper
+        ;;
+      *) echo approved-helper ;;
+    esac
     ;;
-  'install node@24'|'install npm@latest') ;;
-  'install @example/cli@latest'|'install pnpm@latest')
-    tool=${2%@latest}
+  'install node@24') ;;
+  'install --verbose npm@latest'|'install --verbose @example/cli@latest'|'install --verbose pnpm@latest')
+    echo '[verbose] noise'
+    case "$SCENARIO" in
+      old-npm|mixed-failures) ;;
+      *) echo 'npm warn install-scripts .npmrc allow-scripts setting is being ignored because --allow-scripts was passed on the command line' >&2 ;;
+    esac
+    tool=${3%@latest}
+    if [ "$SCENARIO" = mixed-failures ]; then
+      case "$tool" in
+        npm) blocked shared-dep@1.0.0 ;;
+        @example/cli) blocked @scope/native@2.1.0 shared-dep@1.0.0 ;;
+        pnpm) echo 'npm error code E404' >&2; exit 1 ;;
+      esac
+    fi
+    if [ "$tool" = npm ]; then
+      echo 'success: installed and set npm@12.2.3 as default'
+      exit 0
+    fi
     case ",${npm_config_allow_scripts-}," in
       *",$tool,"*) ;;
       *) exit 0 ;; # npm's silent broken installation
     esac
     if [ "$SCENARIO" != old-npm ]; then
       case ",$npm_config_allow_scripts," in
-        *,approved-helper,*) ;;
+        *,approved-helper,*|*,[[:blank:]]approved-helper,*) ;;
         *) echo 'existing approval lost' >&2; exit 1 ;;
       esac
     fi
-    if [ "$SCENARIO" = unapproved-dependency ]; then
-      if [ "${npm_config_strict_allow_scripts-}" = true ]; then
-        echo 'unapproved dependency install script' >&2
-        exit 1
-      fi
-      exit 0
+    if [ "$tool" = @example/cli ]; then
+      case "$SCENARIO" in
+        unapproved-dependency|config-get-failed)
+          if [ "${npm_config_strict_allow_scripts-}" = true ]; then
+            blocked @scope/native@2.1.0 approved-helper@1.0.0
+          fi
+          exit 0
+          ;;
+        changed-npm-error)
+          echo 'npm error some new blocked-scripts wording' >&2
+          echo 'npm error Allow them with --allow-scripts=@scope/native' >&2
+          echo "error: Could not install package '$tool@latest'" >&2
+          exit 1
+          ;;
+      esac
     fi
     if [ "$tool" = pnpm ] && [ "$SCENARIO" = broken-pnpm ]; then exit 0; fi
     printf '%s\n' "$tool" >> "$INSTALLED"
+    echo "success: installed $tool@latest"
     ;;
   'run -- pnpm --version')
     if grep -qx pnpm "$INSTALLED"; then echo 12.18.0; else exit 126; fi
@@ -67,14 +122,82 @@ esac
 			job := mustMerge(t, "").Jobs["volta"]
 			cmd := exec.Command("sh", "-c", strings.Join(job.Run.For("linux"), "\n"))
 			out, err := cmd.CombinedOutput()
-			wantFailure := scenario == "unapproved-dependency" || scenario == "broken-pnpm"
+			wantFailure := scenario != "approved" && scenario != "old-npm"
 			if (err != nil) != wantFailure {
 				t.Fatalf("error = %v, want failure %v; output: %s", err, wantFailure, out)
 			}
-			if !wantFailure {
-				installed, err := os.ReadFile(filepath.Join(dir, "installed"))
-				if err != nil || string(installed) != "@example/cli\npnpm\n" {
-					t.Fatalf("installed tools = %q (%v); output: %s", installed, err, out)
+			wantInstalled := map[string]string{
+				"approved":              "@example/cli\npnpm\n",
+				"old-npm":               "@example/cli\npnpm\n",
+				"unapproved-dependency": "pnpm\n",
+				"broken-pnpm":           "@example/cli\n",
+				"mixed-failures":        "",
+				"changed-npm-error":     "pnpm\n",
+				"config-get-failed":     "pnpm\n",
+			}[scenario]
+			installed, readErr := os.ReadFile(filepath.Join(dir, "installed"))
+			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+				t.Fatalf("read installed: %v", readErr)
+			}
+			if string(installed) != wantInstalled {
+				t.Fatalf("installed tools = %q, want %q; output: %s", installed, wantInstalled, out)
+			}
+			if scenario != "mixed-failures" {
+				if !strings.Contains(string(out), "success: installed and set npm@12.2.3 as default") {
+					t.Fatalf("output is missing normal success line: %s", out)
+				}
+			}
+			for _, noise := range []string{"[verbose]", "allow-scripts setting is being ignored"} {
+				if strings.Contains(string(out), noise) {
+					t.Fatalf("output contains %q: %s", noise, out)
+				}
+			}
+			wantLast := map[string]string{
+				"unapproved-dependency": "install scripts need approval for: @example/cli",
+				"broken-pnpm":           "failed to update: pnpm",
+				"mixed-failures":        "install scripts need approval for: npm @example/cli; failed to update: pnpm",
+				"changed-npm-error":     "failed to update: @example/cli",
+				"config-get-failed":     "npm error failed to read config",
+			}[scenario]
+			if wantFailure {
+				if !strings.HasSuffix(strings.TrimSpace(string(out)), wantLast) {
+					t.Fatalf("output does not end with %q: %s", wantLast, out)
+				}
+			}
+			if scenario == "changed-npm-error" {
+				if !strings.Contains(string(out), "npm error Allow them with --allow-scripts=@scope/native") {
+					t.Fatalf("fallback output stripped npm's Allow them with hint: %s", out)
+				}
+				if strings.Contains(string(out), "npm config set allow-scripts=") {
+					t.Fatalf("fallback output unexpectedly printed combined command: %s", out)
+				}
+			}
+			if scenario == "config-get-failed" {
+				if strings.Contains(string(out), "npm config set allow-scripts=") {
+					t.Fatalf("output printed approval command despite failing to read existing approvals: %s", out)
+				}
+			}
+			wantHint := map[string]string{
+				"unapproved-dependency": "  @scope/native\n  approved-helper\n" +
+					"To allow them, keeping your existing approvals, run:\n" +
+					"  npm config set allow-scripts='esbuild@0.28.1 || 0.28.2,approved-helper,@scope/native' --location=user\n",
+				"mixed-failures": "  shared-dep\n  @scope/native\n" +
+					"To allow them, keeping your existing approvals, run:\n" +
+					"  npm config set allow-scripts=shared-dep,@scope/native --location=user\n",
+			}[scenario]
+			if wantHint != "" {
+				for _, want := range []string{
+					"npm error   @scope/native@2.1.0 (install: node-gyp rebuild; postinstall: node x.js)",
+					"Some packages depend on install scripts that npm has not been allowed to run:\n" + wantHint,
+				} {
+					if !strings.Contains(string(out), want) {
+						t.Fatalf("output is missing %q: %s", want, out)
+					}
+				}
+				for _, unwanted := range []string{"confirm the package is valid", "Allow them with"} {
+					if strings.Contains(string(out), unwanted) {
+						t.Fatalf("output contains misleading advice %q: %s", unwanted, out)
+					}
 				}
 			}
 		})
