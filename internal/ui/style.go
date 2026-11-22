@@ -20,12 +20,15 @@ func (s Style) wrap(code, text string) string {
 	return "\x1b[" + code + "m" + text + "\x1b[0m"
 }
 
-func (s Style) Red(t string) string    { return s.wrap("31", t) }
-func (s Style) Green(t string) string  { return s.wrap("32", t) }
-func (s Style) Yellow(t string) string { return s.wrap("33", t) }
-func (s Style) Cyan(t string) string   { return s.wrap("36", t) }
-func (s Style) Dim(t string) string    { return s.wrap("2", t) }
-func (s Style) Bold(t string) string   { return s.wrap("1", t) }
+func (s Style) Red(t string) string       { return s.wrap("31", t) }
+func (s Style) Green(t string) string     { return s.wrap("32", t) }
+func (s Style) BoldGreen(t string) string { return s.wrap("1;32", t) }
+func (s Style) Yellow(t string) string    { return s.wrap("33", t) }
+func (s Style) Cyan(t string) string      { return s.wrap("36", t) }
+func (s Style) BoldCyan(t string) string  { return s.wrap("1;36", t) }
+func (s Style) DimCyan(t string) string   { return s.wrap("2;36", t) }
+func (s Style) Dim(t string) string       { return s.wrap("2", t) }
+func (s Style) Bold(t string) string      { return s.wrap("1", t) }
 
 // mark returns the symbol for a finished status.
 func (s Style) mark(st run.Status) string {

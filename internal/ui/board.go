@@ -27,9 +27,12 @@ type row struct {
 
 // Board is a live status display with one line per job, redrawn in place.
 type Board struct {
-	w     io.Writer
-	style Style
-	size  func() (width, height int)
+	w       io.Writer
+	style   Style
+	size    func() (width, height int)
+	version string
+	start   time.Time
+	now     func() time.Time
 
 	mu      sync.Mutex
 	rows    map[string]*row
@@ -43,8 +46,19 @@ type Board struct {
 
 // NewBoard starts drawing a board for the given jobs. watchers are only
 // shown once they act.
-func NewBoard(w io.Writer, style Style, size func() (int, int), names, watchers []string) *Board {
-	b := &Board{w: w, style: style, size: size, rows: map[string]*row{}, names: slices.Sorted(slices.Values(names)), stop: make(chan struct{}), stopped: make(chan struct{})}
+func NewBoard(w io.Writer, style Style, size func() (int, int), version string, names, watchers []string) *Board {
+	b := &Board{
+		w:       w,
+		style:   style,
+		size:    size,
+		version: version,
+		start:   time.Now(),
+		now:     time.Now,
+		rows:    map[string]*row{},
+		names:   slices.Sorted(slices.Values(names)),
+		stop:    make(chan struct{}),
+		stopped: make(chan struct{}),
+	}
 	for _, n := range names {
 		b.rows[n] = &row{name: n, watch: slices.Contains(watchers, n)}
 	}
@@ -182,7 +196,12 @@ func (b *Board) render(width, height int) []line {
 	}
 	nameW = min(nameW, max(width/3, 8))
 
-	maxRows := max(height-1, 3)
+	header := b.renderHeader(width, height, visible)
+
+	maxRows := max(height-1-len(header), 1)
+	if len(header) == 0 {
+		maxRows = max(height-1, 3)
+	}
 	folded := 0
 	if len(visible) > maxRows {
 		// Keep failures, running and waiting jobs; drop finished good ones.
@@ -212,7 +231,8 @@ func (b *Board) render(width, height int) []line {
 		visible = keep
 	}
 
-	var out []line
+	out := make([]line, 0, len(header)+len(visible)+1)
+	out = append(out, header...)
 	for _, r := range visible {
 		out = append(out, b.renderRow(r, nameW, width))
 	}
@@ -221,6 +241,119 @@ func (b *Board) render(width, height int) []line {
 		out = append(out, line{b.style.Dim(t), cols(t)})
 	}
 	return out
+}
+
+// renderHeader returns the live logo and progress header: a 3-row stacked
+// chevron mark plus a blank line when there is room, a 1-line summary when
+// height is tight, or nothing in very small terminals.
+func (b *Board) renderHeader(width, height int, visible []*row) []line {
+	avail := height - 1
+	full := width >= 24 && (avail >= len(visible)+4 || avail >= 12)
+	compact := !full && avail >= 4 && width >= 16
+	if !full && !compact {
+		return nil
+	}
+
+	done, failed := 0, 0
+	for _, r := range visible {
+		if r.result != nil {
+			done++
+			if r.result.Status.Bad() {
+				failed++
+			}
+		}
+	}
+	total := len(visible)
+	active := done < total
+	now := b.now
+	if now == nil {
+		now = time.Now
+	}
+	elapsed := formatDuration(max(now().Sub(b.start), 0))
+	ver := formatVersion(b.version)
+
+	progressPlain := fmt.Sprintf("%d/%d done · %s", done, total, elapsed)
+	progressStyled := b.style.Dim(progressPlain)
+	if failed > 0 {
+		progressPlain = fmt.Sprintf("%d/%d done · %d failed · %s", done, total, failed, elapsed)
+		progressStyled = b.style.Dim(fmt.Sprintf("%d/%d done · ", done, total)) +
+			b.style.Red(fmt.Sprintf("%d failed", failed)) +
+			b.style.Dim(" · "+elapsed)
+	}
+
+	top, mid, bot := b.chevrons(active)
+	if full {
+		maxRight := max(width-1-4, 0)
+		titlePlain := "upd" + ver
+		titleStyled := b.style.Bold("upd") + b.style.Dim(ver)
+		if cols(titlePlain) > maxRight {
+			titlePlain = truncate(titlePlain, maxRight)
+			titleStyled = b.style.Bold(titlePlain)
+		}
+		progPlain, progStyled := progressPlain, progressStyled
+		if cols(progPlain) > maxRight {
+			progPlain = truncate(progPlain, maxRight)
+			progStyled = b.style.Dim(progPlain)
+		}
+		return []line{
+			{top, 2},
+			{mid + "  " + titleStyled, 4 + cols(titlePlain)},
+			{bot + "  " + progStyled, 4 + cols(progPlain)},
+			{"", 0},
+		}
+	}
+
+	// Compact 1-line header for short terminals.
+	chev := top
+	if active {
+		switch (b.frame / 3) % 4 {
+		case 0:
+			chev = bot
+		case 1:
+			chev = mid
+		}
+	}
+	maxRight := max(width-1-3, 0)
+	rightPlain := "upd" + ver + " · " + progressPlain
+	rightStyled := b.style.Bold("upd") + b.style.Dim(ver+" · ") + progressStyled
+	if cols(rightPlain) > maxRight {
+		rightPlain = truncate(rightPlain, maxRight)
+		rightStyled = b.style.Dim(rightPlain)
+	}
+	return []line{
+		{chev + " " + rightStyled, 3 + cols(rightPlain)},
+	}
+}
+
+// chevrons returns the three stacked logo rows (top to bottom). While jobs are
+// running, a pulse sweeps upward from the bottom chevron to the top.
+func (b *Board) chevrons(active bool) (top, mid, bot string) {
+	const mark = "╱╲"
+	top = b.style.Green(mark)
+	mid = b.style.Cyan(mark)
+	bot = b.style.DimCyan(mark)
+	if !active {
+		return top, mid, bot
+	}
+	switch (b.frame / 3) % 4 {
+	case 0:
+		bot = b.style.BoldCyan(mark)
+	case 1:
+		mid = b.style.BoldCyan(mark)
+	case 2:
+		top = b.style.BoldGreen(mark)
+	}
+	return top, mid, bot
+}
+
+func formatVersion(v string) string {
+	if v == "" {
+		return ""
+	}
+	if v == "dev" || strings.HasPrefix(v, "v") {
+		return " " + v
+	}
+	return " v" + v
 }
 
 func (b *Board) renderRow(r *row, nameW, width int) line {

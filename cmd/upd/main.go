@@ -352,7 +352,7 @@ func cmdRun(o options) int {
 	}
 	var board *ui.Board
 	if stdoutTTY && vtOK && !o.plain && !o.verbose {
-		board = ui.NewBoard(os.Stdout, style, size, names, watchers)
+		board = ui.NewBoard(os.Stdout, style, size, version, names, watchers)
 		r.Obs = board
 	} else {
 		pl := &ui.Plain{W: os.Stdout, Style: style, Verbose: o.verbose}
