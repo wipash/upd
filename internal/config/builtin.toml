@@ -85,18 +85,12 @@ run = "snap refresh"
 version = "snap list"
 
 # Fedora Atomic (Silverblue, Kinoite, Bazzite, Bluefin, Aurora). polkit lets
-# an active local session upgrade without a password; over SSH it needs sudo.
+# an active local session upgrade without a password; otherwise it uses sudo.
 [commands.rpm-ostree]
 system = true
-when = { has = "rpm-ostree", exists = "/run/ostree-booted", ssh = false }
-skip_if = "systemctl is-active -q uupd.service uupd-manual.service && echo 'uupd is already updating the system'"
-run = "rpm-ostree upgrade"
-version = "rpm-ostree status"
-
-[commands.rpm-ostree-ssh]
-system = true
 sudo = true
-when = { has = "rpm-ostree", exists = "/run/ostree-booted", ssh = true }
+polkit = ["org.projectatomic.rpmostree1.upgrade"]
+when = { has = "rpm-ostree", exists = "/run/ostree-booted" }
 skip_if = "systemctl is-active -q uupd.service uupd-manual.service && echo 'uupd is already updating the system'"
 run = "rpm-ostree upgrade"
 version = "rpm-ostree status"
@@ -104,9 +98,34 @@ version = "rpm-ostree status"
 # ---------------------------------------------------------------------------
 # User-level package managers
 
+# System-wide Flatpaks run on plain upd when polkit authorises updates without
+# a password; otherwise they skip on plain upd and use sudo with -a or by name.
 [commands.flatpak]
-run = "flatpak update -y --noninteractive"
-version = "flatpak list --columns=ref,active"
+system = "sudo"
+sudo = true
+polkit = [
+  "org.freedesktop.Flatpak.app-update",
+  "org.freedesktop.Flatpak.runtime-update",
+  "org.freedesktop.Flatpak.app-install",
+  "org.freedesktop.Flatpak.runtime-install",
+  "org.freedesktop.Flatpak.app-uninstall",
+  "org.freedesktop.Flatpak.runtime-uninstall",
+  "org.freedesktop.Flatpak.modify-repo",
+  "org.freedesktop.Flatpak.appstream-update",
+  "org.freedesktop.Flatpak.metadata-update",
+  "org.freedesktop.Flatpak.update-remote",
+]
+when = { has = "flatpak", exists = "/var/lib/flatpak/app" }
+skip_if = { unix = "if command -v systemctl >/dev/null 2>&1 && systemctl is-active -q uupd.service uupd-manual.service; then echo 'uupd is already updating flatpak'; exit 0; fi; refs=$(flatpak list --system --columns=ref) && [ -z \"$refs\" ] && echo 'no system flatpaks installed'" }
+run = "flatpak update --system -y --noninteractive"
+version = "flatpak list --system --columns=ref,active"
+timeout = "1h"
+
+[commands.flatpak-user]
+when = { has = "flatpak", exists = "~/.local/share/flatpak/app" }
+skip_if = { unix = "if command -v systemctl >/dev/null 2>&1 && systemctl is-active -q uupd.service uupd-manual.service; then echo 'uupd is already updating flatpak'; exit 0; fi; refs=$(flatpak list --user --columns=ref) && [ -z \"$refs\" ] && echo 'no user flatpaks installed'" }
+run = "flatpak update --user -y --noninteractive"
+version = "flatpak list --user --columns=ref,active"
 timeout = "1h"
 
 # Bazzite's uupd also updates brew, and brew's lock fails instead of waiting.

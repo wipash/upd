@@ -43,8 +43,9 @@ func Format(c *Config) string {
 		line("cwd", str(j.Cwd))
 		line("env", env(j.Env))
 		line("after", strList(j.After))
-		line("system", strconv.FormatBool(j.System))
+		line("system", systemMode(j.System))
 		line("sudo", strconv.FormatBool(j.Sudo))
+		line("polkit", strList(j.Polkit))
 		line("when", when(j.When))
 		line("skip_if", cmd(j.SkipIf))
 		line("version", cmd(j.Version))
@@ -61,6 +62,17 @@ func duration(d time.Duration) string {
 		return "0"
 	}
 	return d.String()
+}
+
+func systemMode(m SystemMode) string {
+	switch m {
+	case SystemAlways:
+		return "true"
+	case SystemIfSudo:
+		return `"sudo"`
+	default:
+		return "false"
+	}
 }
 
 func key(k string) string {

@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -233,7 +234,7 @@ func starterConfig() string {
 # hermes = "hermes update --yes"
 #
 # Or as a table with any of these fields: run, shell, cwd, env, after, system,
-# sudo, when, skip_if, version, on_change, timeout, ok_exit_codes,
+# sudo, polkit, when, skip_if, version, on_change, timeout, ok_exit_codes,
 # release_age.
 #
 # Using a built-in job's name changes only the fields you write:
@@ -327,7 +328,8 @@ func cmdRun(o options) int {
 	style := ui.Style{Color: stdoutTTY && vtOK && os.Getenv("NO_COLOR") == ""}
 
 	r := &run.Runner{Config: cfg, Plan: p, Facts: facts, LogDir: logDir}
-	if slices.ContainsFunc(selected, func(e *plan.Entry) bool { return e.Job.Sudo }) {
+	precheckSudoSkips(ctx, r, selected)
+	if slices.ContainsFunc(selected, func(e *plan.Entry) bool { return e.Sudo }) {
 		r.Elevator, r.ElevationErr = run.PrepareElevation(ctx)
 		if r.ElevationErr != nil {
 			fmt.Fprintf(os.Stderr, "upd: %v; jobs that need sudo will be skipped\n", r.ElevationErr)
@@ -437,14 +439,19 @@ func dryRun(cfg *config.Config, p *plan.Plan, facts platform.Facts) int {
 					r.state, r.detail = "will skip", reason
 				}
 			}
-			if e.Job.Sudo {
-				r.detail = strings.TrimSpace(r.detail + " (sudo)")
+			if r.state != "will skip" && e.SkipReason != "" {
+				r.state, r.detail = "will skip", e.SkipReason
 			}
-			if cfg.ReleaseAgeEnv(e.Job) != nil {
-				r.detail = strings.TrimSpace(r.detail + fmt.Sprintf(" (releases at least %s old)", days(cfg.MinRelease)))
-			}
-			if e.Watch {
-				r.detail = strings.TrimSpace(r.detail + " (watcher)")
+			if r.state == "will run" {
+				if e.Sudo {
+					r.detail = strings.TrimSpace(r.detail + " (sudo)")
+				}
+				if cfg.ReleaseAgeEnv(e.Job) != nil {
+					r.detail = strings.TrimSpace(r.detail + fmt.Sprintf(" (releases at least %s old)", days(cfg.MinRelease)))
+				}
+				if e.Watch {
+					r.detail = strings.TrimSpace(r.detail + " (watcher)")
+				}
 			}
 		case plan.Hidden:
 			g, r.detail = 3, e.Reason
@@ -491,4 +498,49 @@ func days(n int) string {
 func skipCheck(j *config.Job, cmd string, facts platform.Facts) (string, bool) {
 	r := &run.Runner{Facts: facts}
 	return r.SkipCheck(context.Background(), j, cmd)
+}
+
+// precheckSudoSkips runs skip_if for sudo jobs before PrepareElevation when
+// every sudo job has an independent skip_if, so upd does not prompt for a
+// password only to skip all of them.
+func precheckSudoSkips(ctx context.Context, r *run.Runner, selected []*plan.Entry) {
+	selectedNames := map[string]bool{}
+	for _, e := range selected {
+		selectedNames[e.Job.Name] = true
+	}
+	var sudoEntries []*plan.Entry
+	for _, e := range selected {
+		if !e.Sudo {
+			continue
+		}
+		if e.Job.SkipIf.For(r.Facts.GOOS) == "" {
+			return
+		}
+		for _, dep := range e.Job.After {
+			if selectedNames[dep] {
+				return
+			}
+		}
+		sudoEntries = append(sudoEntries, e)
+	}
+	if len(sudoEntries) == 0 {
+		return
+	}
+	var wg sync.WaitGroup
+	for _, e := range sudoEntries {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			reason, skip := r.SkipCheck(ctx, e.Job, e.Job.SkipIf.For(r.Facts.GOOS))
+			if ctx.Err() != nil {
+				return
+			}
+			e.SkipChecked = true
+			if skip {
+				e.SkipReason = reason
+				e.Sudo = false
+			}
+		}()
+	}
+	wg.Wait()
 }

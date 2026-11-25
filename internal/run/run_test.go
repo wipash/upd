@@ -260,3 +260,165 @@ func TestProgressBufferStaysSmall(t *testing.T) {
 		t.Errorf("current = %q", lb.current())
 	}
 }
+
+type fakeElevator struct {
+	mu    sync.Mutex
+	calls [][]string
+}
+
+func (e *fakeElevator) Wrap(argv []string, _ map[string]string) []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	cp := append([]string(nil), argv...)
+	e.calls = append(e.calls, cp)
+	return argv
+}
+
+func (e *fakeElevator) Close() {}
+
+func TestResolvedSudoAndSkipReason(t *testing.T) {
+	dir := t.TempDir()
+	ver := filepath.Join(dir, "ver")
+	snapMarker := filepath.Join(dir, "snap-ran")
+	noSudoSnapMarker := filepath.Join(dir, "nosudo-snap-ran")
+	skipMarker := filepath.Join(dir, "skip-checked")
+	os.WriteFile(ver, []byte("1.0\n"), 0o644)
+
+	doc := `
+[commands.elevated]
+sudo = true
+polkit = ["act.deny"]
+run = "echo 2.0 > '` + ver + `'"
+version = "cat '` + ver + `'"
+on_change = "echo elevated-changed"
+
+[commands.allowed]
+sudo = true
+polkit = ["act.allow"]
+run = "echo allowed-ok"
+
+[commands.preskip]
+system = "sudo"
+sudo = true
+polkit = ["act.deny"]
+run = "false"
+version = "touch '` + snapMarker + `'; echo 1.0"
+
+[commands.skipif-wins]
+system = "sudo"
+sudo = true
+polkit = ["act.deny"]
+skip_if = "echo from skip_if"
+run = "false"
+
+[commands.already-checked]
+skip_if = "touch '` + skipMarker + `'; echo should not run"
+run = "echo ran"
+
+[commands.prechecked-skip]
+skip_if = "touch '` + skipMarker + `'; echo should not run"
+run = "false"
+`
+	f, err := config.Parse("config.toml", []byte(doc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Merge(&config.File{Name: "builtin.toml", Jobs: map[string]*config.Spec{}}, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts := platform.Facts{
+		GOOS: "linux",
+		Home: t.TempDir(),
+		CheckPolkit: func(action string) bool {
+			return action == "act.allow"
+		},
+	}
+	p, err := plan.Build(cfg, facts, plan.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Entries["already-checked"].SkipChecked = true
+	p.Entries["prechecked-skip"].SkipChecked = true
+	p.Entries["prechecked-skip"].SkipReason = "prechecked reason"
+
+	el := &fakeElevator{}
+	r := &Runner{Config: cfg, Plan: p, Facts: facts, LogDir: t.TempDir(), Obs: nopObserver{}, Elevator: el}
+	res := map[string]*Result{}
+	for _, x := range r.Run(context.Background()) {
+		res[x.Name] = x
+	}
+
+	if res["elevated"].Status != Updated {
+		t.Errorf("elevated = %v (%s)", res["elevated"].Status, res["elevated"].Detail)
+	}
+	if res["allowed"].Status != Done {
+		t.Errorf("allowed = %v (%s)", res["allowed"].Status, res["allowed"].Detail)
+	}
+	// Only elevated's run + on_change should have gone through Elevator.
+	if len(el.calls) != 2 {
+		t.Fatalf("elevator calls = %d (%v), want 2", len(el.calls), el.calls)
+	}
+	joined := strings.Join(el.calls[0], " ") + "\n" + strings.Join(el.calls[1], " ")
+	if !strings.Contains(joined, "echo 2.0") || !strings.Contains(joined, "elevated-changed") || strings.Contains(joined, "allowed-ok") {
+		t.Errorf("unexpected elevated commands:\n%s", joined)
+	}
+	if res["preskip"].Status != Skipped || res["preskip"].Detail != "needs sudo (use upd -a)" {
+		t.Errorf("preskip = %v (%q)", res["preskip"].Status, res["preskip"].Detail)
+	}
+	if _, err := os.Stat(snapMarker); err == nil {
+		t.Error("version snapshot ran for a pre-skipped job")
+	}
+	if res["skipif-wins"].Status != Skipped || res["skipif-wins"].Detail != "from skip_if" {
+		t.Errorf("skipif-wins = %v (%q)", res["skipif-wins"].Status, res["skipif-wins"].Detail)
+	}
+	if res["already-checked"].Status != Done {
+		t.Errorf("already-checked = %v (%q)", res["already-checked"].Status, res["already-checked"].Detail)
+	}
+	if res["prechecked-skip"].Status != Skipped || res["prechecked-skip"].Detail != "prechecked reason" {
+		t.Errorf("prechecked-skip = %v (%q)", res["prechecked-skip"].Status, res["prechecked-skip"].Detail)
+	}
+	if _, err := os.Stat(skipMarker); err == nil {
+		t.Error("skip_if ran again when SkipChecked was already true")
+	}
+
+	// With Elevator == nil, a polkit-allowed job still runs and a sudo job skips
+	// without running its version snapshot.
+	noElDoc := `
+[commands.allowed]
+sudo = true
+polkit = ["act.allow"]
+run = "echo ok"
+
+[commands.needs-sudo]
+sudo = true
+run = "false"
+version = "touch '` + noSudoSnapMarker + `'; echo 1.0"
+`
+	f2, err := config.Parse("config.toml", []byte(noElDoc))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg2, err := config.Merge(&config.File{Name: "builtin.toml", Jobs: map[string]*config.Spec{}}, f2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := plan.Build(cfg2, facts, plan.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2 := &Runner{Config: cfg2, Plan: p2, Facts: facts, LogDir: t.TempDir(), Obs: nopObserver{}}
+	res2 := map[string]*Result{}
+	for _, x := range r2.Run(context.Background()) {
+		res2[x.Name] = x
+	}
+	if res2["allowed"].Status != Done {
+		t.Errorf("polkit-allowed job with nil Elevator = %v (%s)", res2["allowed"].Status, res2["allowed"].Detail)
+	}
+	if res2["needs-sudo"].Status != Skipped {
+		t.Errorf("needs-sudo with nil Elevator = %v", res2["needs-sudo"].Status)
+	}
+	if _, err := os.Stat(noSudoSnapMarker); err == nil {
+		t.Error("version snapshot ran when Elevator was nil for a sudo job")
+	}
+}

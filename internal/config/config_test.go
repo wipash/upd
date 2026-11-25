@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -42,8 +43,14 @@ func TestBuiltinIsValid(t *testing.T) {
 	}
 	for _, name := range cfg.Names() {
 		j := cfg.Jobs[name]
-		if j.Sudo && !j.System {
-			t.Errorf("%s: sudo jobs must be system jobs so plain upd never asks for a password", name)
+		if j.Sudo && j.System == SystemNever {
+			t.Errorf("%s: sudo jobs must set system = true or \"sudo\" so plain upd never asks for a password", name)
+		}
+		if len(j.Polkit) > 0 && !j.Sudo {
+			t.Errorf("%s: polkit jobs must also set sudo = true", name)
+		}
+		if j.System == SystemIfSudo && !j.Sudo {
+			t.Errorf("%s: system = \"sudo\" requires sudo = true", name)
 		}
 	}
 }
@@ -58,6 +65,12 @@ func TestErrors(t *testing.T) {
 		{"after element type", "[commands.x]\nrun = \"x\"\nafter = [\"brew\", 3]\n", `config.toml:3:18: commands.x.after[1]: expected a string, got an integer`},
 		{"bad os key", "[commands.x]\nrun = { widows = \"x\" }\n", `config.toml:2:9: commands.x.run.widows: unknown key (did you mean "windows"?)`},
 		{"bad bool", "[commands.x]\nrun = \"x\"\nsudo = \"yes\"\n", `config.toml:3:8: commands.x.sudo: expected true or false, got a string`},
+		{"bad system string", "[commands.x]\nrun = \"x\"\nsystem = \"maybe\"\n", `config.toml:3:10: commands.x.system: invalid system value "maybe" (expected true, false, or "sudo")`},
+		{"bad system type", "[commands.x]\nrun = \"x\"\nsystem = 1\n", `config.toml:3:10: commands.x.system: expected true, false, or "sudo", got an integer`},
+		{"bad polkit type", "[commands.x]\nrun = \"x\"\npolkit = \"org.example.op\"\n", `config.toml:3:10: commands.x.polkit: expected a list of strings, got a string`},
+		{"bad polkit element", "[commands.x]\nrun = \"x\"\npolkit = [1]\n", `config.toml:3:11: commands.x.polkit[0]: expected a string, got an integer`},
+		{"empty polkit action", "[commands.x]\nrun = \"x\"\npolkit = [\"org.example.op\", \"\"]\n", `commands.x.polkit[1]: polkit action cannot be empty`},
+		{"blank polkit action", "[commands.x]\nrun = \"x\"\npolkit = [\"  \"]\n", `commands.x.polkit[0]: polkit action cannot be empty`},
 		{"bad duration", "[commands.x]\nrun = \"x\"\ntimeout = \"10 minutes\"\n", `commands.x.timeout: invalid duration "10 minutes"`},
 		{"bad when os", "[commands.x]\nrun = \"x\"\nwhen = { os = [\"macos\"] }\n", `commands.x.when.os: unknown OS "macos"`},
 		{"syntax", "[commands.x]\nrun = \n", `config.toml:2:`},
@@ -88,7 +101,7 @@ func TestShorthandKeepsBuiltinFields(t *testing.T) {
 	if got := apt.Run.For("linux"); len(got) != 1 || got[0] != "apt-get dist-upgrade" {
 		t.Errorf("run = %q", got)
 	}
-	if !apt.Sudo || !apt.System || apt.Env["DEBIAN_FRONTEND"] == "" {
+	if !apt.Sudo || apt.System != SystemAlways || apt.Env["DEBIAN_FRONTEND"] == "" {
 		t.Errorf("shorthand dropped built-in fields: %+v", apt)
 	}
 	if apt.Source["run"] != SourceUser || apt.Source["sudo"] != SourceBuiltin {
@@ -107,12 +120,27 @@ skip_if = ""
 after = []
 timeout = "0"
 
+[commands.flatpak]
+polkit = []
+
+[commands.rpm-ostree]
+system = "sudo"
+
 [commands.mine]
 run = ["one", { unix = "two", windows = "zwei" }]
 `)
 	apt := cfg.Jobs["apt"]
-	if apt.System {
+	if apt.System != SystemNever {
 		t.Error("system = false did not override")
+	}
+	if len(cfg.Jobs["flatpak"].Polkit) != 0 {
+		t.Errorf("polkit = [] did not clear built-in polkit: %v", cfg.Jobs["flatpak"].Polkit)
+	}
+	if cfg.Jobs["rpm-ostree"].System != SystemIfSudo {
+		t.Errorf("rpm-ostree system = %v, want SystemIfSudo", cfg.Jobs["rpm-ostree"].System)
+	}
+	if cfg.Jobs["rpm-ostree"].Timeout != 0 {
+		t.Errorf("system = \"sudo\" default timeout = %v, want none", cfg.Jobs["rpm-ostree"].Timeout)
 	}
 	if _, ok := apt.Env["NEEDRESTART_MODE"]; ok {
 		t.Error(`env key set to "" was not removed`)
@@ -160,6 +188,10 @@ func TestStringEscapes(t *testing.T) {
 func TestFormatRoundTrip(t *testing.T) {
 	cfg := mustMerge(t, `
 post = ["echo done"]
+[commands.apt]
+system = false
+[commands.flatpak]
+polkit = []
 [commands.mine]
 run = ["one", { unix = "two", windows = "zwei" }]
 env = { "WEIRD KEY" = "a\"b" }
@@ -177,13 +209,19 @@ on_change = "x restart"
 	if err != nil {
 		t.Fatalf("formatted config does not validate: %v", err)
 	}
-	if Format(again) != strings.ReplaceAll(out, "# builtin", "# formatted.toml") {
-		// Sources differ (everything is "user" now), so compare job by job.
-		for _, name := range cfg.Names() {
-			a, b := cfg.Jobs[name], again.Jobs[name]
-			if strings.Join(a.Run.For("linux"), "\n") != strings.Join(b.Run.For("linux"), "\n") {
-				t.Errorf("%s: run changed in round trip", name)
-			}
+	for _, name := range cfg.Names() {
+		a, b := cfg.Jobs[name], again.Jobs[name]
+		if strings.Join(a.Run.For("linux"), "\n") != strings.Join(b.Run.For("linux"), "\n") {
+			t.Errorf("%s: run changed in round trip", name)
+		}
+		if a.System != b.System {
+			t.Errorf("%s: system changed in round trip: %v -> %v", name, a.System, b.System)
+		}
+		if a.Sudo != b.Sudo {
+			t.Errorf("%s: sudo changed in round trip: %v -> %v", name, a.Sudo, b.Sudo)
+		}
+		if !slices.Equal(a.Polkit, b.Polkit) {
+			t.Errorf("%s: polkit changed in round trip: %v -> %v", name, a.Polkit, b.Polkit)
 		}
 	}
 }

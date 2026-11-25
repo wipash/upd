@@ -25,8 +25,9 @@ type Job struct {
 	Cwd         string
 	Env         map[string]string
 	After       []string
-	System      bool
+	System      SystemMode
 	Sudo        bool
+	Polkit      []string
 	When        When
 	SkipIf      Cmd
 	Version     Cmd
@@ -94,7 +95,7 @@ func Merge(builtin, user *File) (*Config, error) {
 		}
 	}
 	for _, j := range cfg.Jobs {
-		if _, set := j.Source["timeout"]; !set && !j.System {
+		if _, set := j.Source["timeout"]; !set && j.System == SystemNever {
 			j.Timeout = DefaultTimeout
 		}
 		if len(j.OkExitCodes) == 0 {
@@ -136,6 +137,10 @@ func apply(j *Job, s *Spec, src string) {
 	if s.Sudo != nil {
 		j.Sudo = *s.Sudo
 		set("sudo")
+	}
+	if s.Polkit != nil {
+		j.Polkit = *s.Polkit
+		set("polkit")
 	}
 	if s.When != nil {
 		j.When = *s.When

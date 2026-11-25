@@ -175,6 +175,9 @@ func descendants(states map[string]*jobState, name string) []string {
 
 func (r *Runner) snapshot(ctx context.Context, s *jobState) {
 	defer close(s.snapDone)
+	if s.entry.SkipReason != "" || (s.entry.Sudo && r.Elevator == nil) {
+		return
+	}
 	cmd := s.job.Version.For(r.Facts.GOOS)
 	if cmd == "" {
 		return
@@ -251,17 +254,24 @@ func (r *Runner) runJob(ctx context.Context, s *jobState, states map[string]*job
 	}
 	defer logf.Close()
 
-	if cmd := j.SkipIf.For(r.Facts.GOOS); cmd != "" {
-		if reason, skip := r.SkipCheck(ctx, j, cmd); skip {
-			res.Status, res.Detail = Skipped, reason
-			fmt.Fprintf(logf, "skipped: %s\n", reason)
-			return res
-		}
-		if ctx.Err() != nil {
-			return notRun()
+	if !s.entry.SkipChecked {
+		if cmd := j.SkipIf.For(r.Facts.GOOS); cmd != "" {
+			if reason, skip := r.SkipCheck(ctx, j, cmd); skip {
+				res.Status, res.Detail = Skipped, reason
+				fmt.Fprintf(logf, "skipped: %s\n", reason)
+				return res
+			}
+			if ctx.Err() != nil {
+				return notRun()
+			}
 		}
 	}
-	if j.Sudo && r.Elevator == nil {
+	if s.entry.SkipReason != "" {
+		res.Status, res.Detail = Skipped, s.entry.SkipReason
+		fmt.Fprintf(logf, "skipped: %s\n", s.entry.SkipReason)
+		return res
+	}
+	if s.entry.Sudo && r.Elevator == nil {
 		res.Status, res.Detail = Skipped, "no sudo"
 		if r.ElevationErr != nil {
 			res.Detail = "no sudo: " + r.ElevationErr.Error()
@@ -276,7 +286,7 @@ func (r *Runner) runJob(ctx context.Context, s *jobState, states map[string]*job
 	var last string
 	for _, cmd := range j.Run.For(r.Facts.GOOS) {
 		fmt.Fprintf(logf, "$ %s\n", cmd)
-		st, detail, lastLine := r.step(ctx, j, cmd, logf, deadline, j.Timeout, j.Sudo)
+		st, detail, lastLine := r.step(ctx, j, cmd, logf, deadline, j.Timeout, s.entry.Sudo)
 		last = lastLine
 		if st != Done {
 			res.Status, res.Detail = st, detail
@@ -317,7 +327,7 @@ func (r *Runner) runJob(ctx context.Context, s *jobState, states map[string]*job
 		if j.Timeout > 0 {
 			ocDeadline = time.Now().Add(j.Timeout)
 		}
-		st, detail, _ := r.step(ctx, j, oc, logf, ocDeadline, j.Timeout, j.Sudo)
+		st, detail, _ := r.step(ctx, j, oc, logf, ocDeadline, j.Timeout, s.entry.Sudo)
 		if st != Done {
 			res.Status, res.Detail = ChangeFailed, change+"; on_change "+detail
 		}
