@@ -1,0 +1,194 @@
+# Polkit checks and Flatpak/rpm-ostree behaviour are Linux-only.
+[!linux] skip
+
+chmod 0755 bin/flatpak
+chmod 0755 bin/rpm-ostree
+chmod 0755 bin/systemctl
+chmod 0755 bin/pkcheck
+mkdir root/var/lib/flatpak/app
+# User repo without app/ stays hidden.
+mkdir home/.local/share/flatpak/repo
+
+# 1. Polkit authorises: flatpak runs on plain upd without sudo, flatpak-user is hidden,
+#    and upd -a runs both flatpak and rpm-ostree without asking for sudo.
+cp allow.mode pkcheck.mode
+exec upd --dry-run
+stdout '^flatpak +will run$'
+stdout '^flatpak-user +hidden +.*flatpak/app does not exist'
+stdout '^rpm-ostree +system only \(use -a\)$'
+
+exec upd
+! stderr 'no terminal'
+stdout 'updated +flatpak .*v1 → v2'
+
+exec upd -a
+! stderr 'no terminal'
+stdout 'ok +flatpak'
+stdout 'ok +rpm-ostree'
+
+# 2. With user flatpaks installed, flatpak and flatpak-user run and track versions separately.
+mkdir home/.local/share/flatpak/app
+cp user-update.flag user.flag
+exec upd
+! stderr 'no terminal'
+stdout 'ok +flatpak '
+stdout 'updated +flatpak-user .*v1 → v2'
+
+# 3. Temporary polkit authorisation is rejected (detached child would fail).
+cp temp.mode pkcheck.mode
+exec upd
+! stderr 'no terminal'
+stdout 'skip +flatpak .*needs sudo \(use upd -a\)'
+stdout 'ok +flatpak-user'
+
+# 4. Polkit denies (exit 2): plain upd skips system flatpak cleanly without prompting,
+#    still runs flatpak-user, and upd -a / upd flatpak request sudo.
+cp deny.mode pkcheck.mode
+exec upd --dry-run
+stdout '^flatpak +will skip +needs sudo \(use upd -a\)$'
+! stdout '^flatpak .*\(sudo\)'
+stdout '^flatpak-user +will run$'
+
+exec upd
+! stderr 'no terminal'
+stdout 'skip +flatpak .*needs sudo \(use upd -a\)'
+stdout 'ok +flatpak-user'
+
+exec upd -a --dry-run
+stdout '^flatpak +will run +\(sudo\)$'
+stdout '^rpm-ostree +will run +\(sudo\)$'
+
+exec upd --dry-run flatpak
+stdout '^flatpak +will run +\(sudo\)$'
+
+exec upd -a
+stderr 'no terminal to ask for the sudo password'
+stdout 'skip +flatpak .*no sudo'
+stdout 'skip +rpm-ostree .*no sudo'
+
+exec upd flatpak
+stderr 'no terminal to ask for the sudo password'
+stdout 'skip +flatpak .*no sudo'
+
+# 5. Missing pkcheck behaves the same as denial.
+rm bin/pkcheck
+exec upd
+! stderr 'no terminal'
+stdout 'skip +flatpak .*needs sudo \(use upd -a\)'
+
+# 6. Active uupd takes precedence over "needs sudo" and skips before prompting for sudo on -a.
+cp uupd-active.flag uupd.flag
+exec upd --dry-run
+stdout '^flatpak +will skip +uupd is already updating flatpak$'
+! stdout '^flatpak .*\(sudo\)'
+stdout '^flatpak-user +will skip +uupd is already updating flatpak$'
+
+exec upd
+! stderr 'no terminal'
+stdout 'skip +flatpak .*uupd is already updating flatpak'
+stdout 'skip +flatpak-user .*uupd is already updating flatpak'
+
+exec upd -a
+! stderr 'no terminal'
+stdout 'skip +flatpak .*uupd is already updating flatpak'
+stdout 'skip +rpm-ostree .*uupd is already updating the system'
+
+# 7. Empty flatpak lists skip cleanly without prompting for sudo.
+rm uupd.flag
+cp empty-sys.flag empty.flag
+exec upd flatpak
+! stderr 'no terminal'
+stdout 'skip +flatpak .*no system flatpaks installed'
+
+cp empty-user.flag empty-user.active
+exec upd flatpak-user
+stdout 'skip +flatpak-user .*no user flatpaks installed'
+
+-- home/.config/upd/config.toml --
+disable = ["upd"]
+-- root/run/ostree-booted --
+-- allow.mode --
+allow
+-- deny.mode --
+deny
+-- temp.mode --
+temp
+-- user-update.flag --
+1
+-- uupd-active.flag --
+1
+-- empty-sys.flag --
+1
+-- empty-user.flag --
+1
+-- bin/pkcheck --
+#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    -u|--allow-user-interaction)
+      echo "pkcheck called with interactive flag" >&2
+      exit 99
+      ;;
+  esac
+done
+mode=$(cat "$WORK/pkcheck.mode" 2>/dev/null || echo deny)
+case "$mode" in
+  allow) exit 0 ;;
+  temp)
+    printf '%s\n' 'polkit\56temporary_authorization_id=tmpauthz1'
+    exit 0
+    ;;
+  *) exit 2 ;;
+esac
+-- bin/systemctl --
+#!/bin/sh
+if [ -f "$WORK/uupd.flag" ]; then
+  exit 0
+fi
+exit 3
+-- bin/rpm-ostree --
+#!/bin/sh
+case "$1" in
+  status) echo "bazzite 43" ;;
+  upgrade) echo "No upgrade available." ;;
+esac
+-- bin/flatpak --
+#!/bin/sh
+case "$1" in
+  list)
+    shift
+    scope=
+    for a in "$@"; do
+      case "$a" in --system) scope=sys ;; --user) scope=user ;; esac
+    done
+    if [ "$scope" = sys ]; then
+      [ -f "$WORK/empty.flag" ] && exit 0
+      ver=$(cat "$WORK/sys.ver" 2>/dev/null || echo v1)
+      echo "com.example.Sys/x86_64/stable	$ver"
+    elif [ "$scope" = user ]; then
+      [ -f "$WORK/empty-user.active" ] && exit 0
+      ver=$(cat "$WORK/user.ver" 2>/dev/null || echo v1)
+      echo "com.example.User/x86_64/stable	$ver"
+    else
+      echo "flatpak list called without scope" >&2
+      exit 1
+    fi
+    ;;
+  update)
+    shift
+    scope=
+    for a in "$@"; do
+      case "$a" in --system) scope=sys ;; --user) scope=user ;; esac
+    done
+    if [ "$scope" = sys ]; then
+      echo v2 > "$WORK/sys.ver"
+    elif [ "$scope" = user ]; then
+      if [ -f "$WORK/user.flag" ]; then
+        echo v2 > "$WORK/user.ver"
+      fi
+    else
+      echo "flatpak update called without scope" >&2
+      exit 1
+    fi
+    ;;
+esac

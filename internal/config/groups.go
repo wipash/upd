@@ -11,10 +11,10 @@ type Group struct {
 var BuiltinGroups = []Group{
 	{"System package managers (only with -a)", []string{
 		"apt", "dnf", "apk", "pacman", "zypper-dup", "zypper-update", "snap",
-		"rpm-ostree", "rpm-ostree-ssh", "aws-system",
+		"rpm-ostree", "aws-system",
 	}},
 	{"Package managers", []string{
-		"flatpak", "brew", "uv-self", "uv", "pipx", "rustup", "mise", "mise-self",
+		"flatpak", "flatpak-user", "brew", "uv-self", "uv", "pipx", "rustup", "mise", "mise-self",
 		"gh-extensions", "volta", "upd",
 	}},
 	{"Tools that update themselves (skipped when a package manager installed them)", []string{

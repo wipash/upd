@@ -17,7 +17,14 @@ type Facts struct {
 	Distro []string // os-release ID followed by the words of ID_LIKE
 	WSL    bool
 	SSH    bool
+	Root   bool
 	Home   string
+
+	// CheckPolkit reports whether polkit authorises action without
+	// interactive authentication or temporary grants. Nil means unavailable
+	// (always false), so unit tests constructing Facts directly do not query
+	// the host's polkitd.
+	CheckPolkit func(action string) bool
 
 	// root prefixes absolute paths checked by predicates. It is empty except
 	// in tests, which set UPD_TEST_ROOT to fake files such as
@@ -27,7 +34,7 @@ type Facts struct {
 
 // Detect inspects the current machine.
 func Detect() Facts {
-	f := Facts{GOOS: runtime.GOOS, root: os.Getenv("UPD_TEST_ROOT")}
+	f := Facts{GOOS: runtime.GOOS, Root: os.Geteuid() == 0, root: os.Getenv("UPD_TEST_ROOT")}
 	f.Home, _ = os.UserHomeDir()
 	f.SSH = os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_TTY") != ""
 	if f.GOOS == "linux" {
@@ -36,8 +43,17 @@ func Detect() Facts {
 			f.Distro = osRelease(f.Path("/usr/lib/os-release"))
 		}
 		f.WSL = os.Getenv("WSL_DISTRO_NAME") != "" || exists(f.Path("/proc/sys/fs/binfmt_misc/WSLInterop"))
+		f.CheckPolkit = newPolkitChecker()
 	}
 	return f
+}
+
+// PolkitAllowed reports whether polkit authorises action without prompting.
+func (f Facts) PolkitAllowed(action string) bool {
+	if f.GOOS != "linux" || f.CheckPolkit == nil {
+		return false
+	}
+	return f.CheckPolkit(action)
 }
 
 func osRelease(path string) []string {

@@ -60,6 +60,13 @@ func TestDistroDetection(t *testing.T) {
 			if !slices.Equal(got, jobs) {
 				t.Errorf("visible system jobs %v, want %v (distro %v)", got, jobs, f.Distro)
 			}
+			// rpm-ostree stays visible over SSH because privilege is decided by polkit.
+			if distro == "bazzite" {
+				t.Setenv("SSH_CONNECTION", "10.0.0.1 54321 10.0.0.2 22")
+				if r := Visible(cfg, cfg.Jobs["rpm-ostree"], platform.Detect()); r != "" {
+					t.Errorf("rpm-ostree hidden over SSH: %s", r)
+				}
+			}
 		})
 	}
 }

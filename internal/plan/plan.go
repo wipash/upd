@@ -29,10 +29,13 @@ func (s State) String() string {
 
 // Entry is one job and its fate.
 type Entry struct {
-	Job    *config.Job
-	State  State
-	Reason string // why the job is hidden
-	Watch  bool   // a watcher job (no run command on this OS)
+	Job         *config.Job
+	State       State
+	Reason      string // why the job is hidden
+	SkipReason  string // why a selected job will be skipped
+	SkipChecked bool   // skip_if was already evaluated before the run
+	Sudo        bool   // whether the job needs sudo for this run
+	Watch       bool   // a watcher job (no run command on this OS)
 }
 
 // Plan is the set of jobs for one run.
@@ -82,8 +85,14 @@ func Build(cfg *config.Config, f platform.Facts, opts Options) (*Plan, error) {
 			case e.State == Hidden:
 			case slices.Contains(cfg.Disable, n):
 				e.State = Disabled
-			case e.Job.System && !opts.All:
+			case e.Job.System == config.SystemAlways && !opts.All:
 				e.State = SystemOnly
+			default:
+				e.Sudo = resolveSudo(e.Job, f)
+				if e.Job.System == config.SystemIfSudo && !opts.All && e.Sudo {
+					e.Sudo = false
+					e.SkipReason = "needs sudo (use upd -a)"
+				}
 			}
 		}
 		return p, nil
@@ -105,28 +114,60 @@ func Build(cfg *config.Config, f platform.Facts, opts Options) (*Plan, error) {
 		named[n] = true
 	}
 	// Watchers follow the jobs they watch, so naming brew also runs a
-	// watcher that comes after brew.
+	// watcher that comes after brew (respecting system unless -a is set).
+	included := map[string]bool{}
+	for n := range named {
+		included[n] = true
+	}
 	for changed := true; changed; {
 		changed = false
 		for _, n := range p.Names {
 			e := p.Entries[n]
-			if named[n] || !e.Watch || e.State == Hidden || slices.Contains(cfg.Disable, n) {
+			if included[n] || !e.Watch || e.State == Hidden || slices.Contains(cfg.Disable, n) {
+				continue
+			}
+			if e.Job.System == config.SystemAlways && !opts.All {
 				continue
 			}
 			for _, a := range e.Job.After {
-				if named[a] {
-					named[n], changed = true, true
+				if included[a] {
+					included[n], changed = true, true
 					break
 				}
 			}
 		}
 	}
 	for _, n := range p.Names {
-		if e := p.Entries[n]; e.State != Hidden && !named[n] {
+		e := p.Entries[n]
+		if e.State == Hidden {
+			continue
+		}
+		if !included[n] {
 			e.State = NotNamed
+			continue
+		}
+		e.Sudo = resolveSudo(e.Job, f)
+		if !named[n] && e.Job.System == config.SystemIfSudo && !opts.All && e.Sudo {
+			e.Sudo = false
+			e.SkipReason = "needs sudo (use upd -a)"
 		}
 	}
 	return p, nil
+}
+
+func resolveSudo(j *config.Job, f platform.Facts) bool {
+	if !j.Sudo || f.Root {
+		return false
+	}
+	if len(j.Polkit) == 0 {
+		return true
+	}
+	for _, action := range j.Polkit {
+		if !f.PolkitAllowed(action) {
+			return true
+		}
+	}
+	return false
 }
 
 // Visible returns "" when the job applies to this machine, or the reason

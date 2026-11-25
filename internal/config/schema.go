@@ -81,6 +81,15 @@ type When struct {
 	Missing string
 }
 
+// SystemMode controls when a job requires -a/--all.
+type SystemMode uint8
+
+const (
+	SystemNever  SystemMode = iota // false: runs on plain upd
+	SystemAlways                   // true: requires -a or being named
+	SystemIfSudo                   // "sudo": requires -a only when sudo is needed
+)
+
 // Spec is one job as written in a single file. A nil field was not written,
 // so a user Spec can be layered over a built-in Spec field by field.
 type Spec struct {
@@ -89,8 +98,9 @@ type Spec struct {
 	Cwd         *string
 	Env         map[string]string
 	After       *[]string
-	System      *bool
+	System      *SystemMode
 	Sudo        *bool
+	Polkit      *[]string
 	When        *When
 	SkipIf      *Cmd
 	Version     *Cmd
@@ -123,7 +133,7 @@ type File struct {
 
 var (
 	topKeys  = []string{"managed_paths", "disable", "max_parallel", "min_release_age", "post", "commands"}
-	jobKeys  = []string{"run", "shell", "cwd", "env", "after", "system", "sudo", "when", "skip_if", "version", "on_change", "timeout", "ok_exit_codes", "release_age"}
+	jobKeys  = []string{"run", "shell", "cwd", "env", "after", "system", "sudo", "polkit", "when", "skip_if", "version", "on_change", "timeout", "ok_exit_codes", "release_age"}
 	whenKeys = []string{"has", "managed", "path", "path_not", "os", "distro", "wsl", "ssh", "exists", "missing"}
 	osValues = []string{"linux", "darwin", "windows"}
 )
@@ -275,9 +285,18 @@ func (d decoder) job(v *value, key string) (*Spec, error) {
 			l, err = d.strList(f.val, k)
 			s.After = &l
 		case "system":
-			s.System, err = d.boolPtr(f.val, k)
+			s.System, err = d.systemMode(f.val, k)
 		case "sudo":
 			s.Sudo, err = d.boolPtr(f.val, k)
+		case "polkit":
+			var l []string
+			l, err = d.strList(f.val, k)
+			for i, a := range l {
+				if strings.TrimSpace(a) == "" && err == nil {
+					err = d.errf(f.val.items[i].pos, fmt.Sprintf("%s[%d]", k, i), "polkit action cannot be empty")
+				}
+			}
+			s.Polkit = &l
 		case "when":
 			s.When, err = d.when(f.val, k)
 		case "skip_if":
@@ -432,6 +451,25 @@ func (d decoder) boolPtr(v *value, key string) (*bool, error) {
 	}
 	b := v.text == "true"
 	return &b, nil
+}
+
+func (d decoder) systemMode(v *value, key string) (*SystemMode, error) {
+	switch v.kind {
+	case unstable.Bool:
+		m := SystemNever
+		if v.text == "true" {
+			m = SystemAlways
+		}
+		return &m, nil
+	case unstable.String:
+		if v.text == "sudo" {
+			m := SystemIfSudo
+			return &m, nil
+		}
+		return nil, d.errf(v.pos, key, `invalid system value %q (expected true, false, or "sudo")`, v.text)
+	default:
+		return nil, d.wrongType(v, key, `true, false, or "sudo"`)
+	}
 }
 
 func (d decoder) int(v *value, key string) (int, error) {
